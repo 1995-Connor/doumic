@@ -5,10 +5,12 @@
 只做一件事：连接录音豆 → 实时收音 → 注入手机麦克风通路。  
 **不是** Soundcore Manager，没有录音库、转写、文件导出。
 
-开启后：
+目标：
 
-- 搜狗 / 讯飞 / 系统语音输入 → 采录音豆
+- 搜狗 / 讯飞 / Typeless / 系统语音 → 采录音豆
 - 腾讯会议 / Zoom / 飞书开会开麦 → 采录音豆
+
+**重要限制（请先读）**：Android **不允许**普通 App 把自己注册成「系统麦克风」。豆麦走的是 Shizuku/shell 的 `AudioPolicy` 注入（和 VirtuMic 同类），在接近 AOSP 的机器上可以冒充内置麦；在大量国产 ROM（小米 HyperOS、OPPO/vivo 等）上，厂商改过音频策略，**注册成功也不一定会替换硬件麦**——这时 Typeless 波形不会跳，蓝牙列表里也不会出现录音豆。这不是安装错了，而是系统层没放行。
 
 ## 与 Soundcore Manager 共存
 
@@ -56,15 +58,26 @@ cp build/app/outputs/flutter-apk/app-release.apk releases/doumai-release.apk
 
 设备指示灯亮起只表示正在向手机推流；本 App **不保存录音文件**。
 
-### Typeless 波形不跳 / 不确定有没有走豆麦？
+### Typeless 波形不跳？
 
-豆麦界面上的电平只表示「录音豆 → 豆麦」有 PCM。Typeless 要跳，还必须「豆麦 → 系统虚拟麦注入」被输入法真正采到。系统蓝牙列表里不会出现这支麦（不是经典 HFP）。
+1. 豆麦电平能动，只说明「豆 → 豆麦」通了。  
+2. 点「本机回采自检」：失败 = 这台 ROM 没把注入当成系统麦，Typeless 也必然听不到。  
+3. 蓝牙设置里看不到录音豆是正常的——它是 BLE 传 Opus，不是经典蓝牙通话麦（HFP）。
 
-本版修复了注入轨未持续喂数、未 `setPersistent` 时输入法仍读手机麦的问题；界面会显示系统是否报告「有 App 正在从注入通路采麦」。小声场景另有自动增益。
+市面上「能当系统麦」的第三方麦，通常是下面几类之一，**都不是**普通 App 权限能做的事：
+
+| 类型 | 例子 | 系统怎么认 |
+|---|---|---|
+| 经典蓝牙通话麦 | 蓝牙耳机 HFP | 系统蓝牙协议栈挂上真正的 mic 设备 |
+| USB 声卡麦 | USB 麦克风 | USB Audio 设备节点 |
+| 特权虚拟麦 | VirtuMic（ADB/Magisk） | shell/root 注册 AudioPolicy（和豆麦同路，依赖 ROM） |
+| App 内自用 | 飞书 / Soundcore Manager | 只在自己 App 里收 BLE，**不**替换系统麦 |
+
+录音豆属于 BLE 配件，官方也是「App 内收音」，不是 HFP 耳机。
 
 ## 原理
 
-录音豆走 BLE Opus，不是经典蓝牙 HFP。豆麦用 Shizuku 以 shell 权限注册 `AudioPolicy` 注入轨，把 PCM 写进系统 `MIC` / `VOICE_RECOGNITION` / `VOICE_COMMUNICATION` 采集通路。
+录音豆走 BLE Opus。豆麦用 Shizuku 以 shell 权限注册 `AudioPolicy` 注入轨，尝试把 PCM 写进 `MIC` / `VOICE_RECOGNITION` / `VOICE_COMMUNICATION`。若厂商 AudioPolicy 忽略动态注入，这条路在这台手机上就走不通；可选后续：Magisk 系统级模块、或做「豆麦输入法」在输入法进程内直接用豆（不再经过系统麦，也就不能驱动 Typeless）。
 
 协议来自社区逆向：[tacshi/Soundcore](https://github.com/tacshi/Soundcore)。详见 [`PROTOCOL.md`](PROTOCOL.md)。
 
