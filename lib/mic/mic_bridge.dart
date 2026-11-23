@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
+import 'pcm_gain.dart';
+
 /// Bridges D3200 realtime PCM into a **system-wide virtual microphone**.
 ///
 /// On Android 13+, with Shizuku (wireless debugging), we register an AudioPolicy
@@ -29,6 +31,7 @@ class MicBridge extends ChangeNotifier {
   String _dictationBaseline = '';
   StreamSubscription? _eventSub;
   int _pcmBytesForwarded = 0;
+  final PcmGain _gain = PcmGain();
 
   bool get enabled => _enabled;
   bool get nativeReady => _nativeReady;
@@ -41,6 +44,24 @@ class MicBridge extends ChangeNotifier {
   String? get lastError => _lastError;
   int get pcmBytesForwarded => _pcmBytesForwarded;
   String get dictationBaseline => _dictationBaseline;
+
+  /// Soft AGC on by default — phone mics get HAL AGC; the bean does not.
+  bool get autoGain => _gain.auto;
+  double get manualGain => _gain.manualGain;
+  double get appliedGain => _gain.appliedGain;
+
+  void setAutoGain(bool value) {
+    if (_gain.auto == value) return;
+    _gain.auto = value;
+    notifyListeners();
+  }
+
+  void setManualGain(double value) {
+    final g = value.clamp(1.0, 16.0);
+    if ((_gain.manualGain - g).abs() < 0.01) return;
+    _gain.manualGain = g;
+    if (!_gain.auto) notifyListeners();
+  }
 
   void Function()? onDictationStart;
   void Function()? onDictationStop;
@@ -112,6 +133,10 @@ class MicBridge extends ChangeNotifier {
     await ensureInitialized();
     _enabled = value;
     _lastError = null;
+    if (value) {
+      _gain.reset();
+      _pcmBytesForwarded = 0;
+    }
     _status = value ? '正在启动系统虚拟麦克风…' : '未启用';
     notifyListeners();
     try {
@@ -132,10 +157,13 @@ class MicBridge extends ChangeNotifier {
 
   void pushPcm(Uint8List pcm) {
     if (!_enabled || pcm.isEmpty) return;
-    _updateLevel(pcm);
-    _pcmBytesForwarded += pcm.length;
+    // Boost before inject: Typeless / IMEs often gate levels that phone AGC
+    // would have lifted for a built-in mic.
+    final boosted = _gain.process(pcm);
+    _updateLevel(boosted);
+    _pcmBytesForwarded += boosted.length;
     unawaited(
-      _method.invokeMethod<void>('pushPcm', pcm).catchError((Object e) {
+      _method.invokeMethod<void>('pushPcm', boosted).catchError((Object e) {
         if (_lastError == null) {
           _lastError = 'PCM 推送失败: $e';
           notifyListeners();

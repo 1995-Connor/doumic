@@ -3830,7 +3830,36 @@ class RecorderController extends ChangeNotifier {
   Future<void> unbindDevice() async {
     _postBindFileRefreshTimer?.cancel();
     _pendingBindRequest = false;
+    if (!connected || !_ble.isConnected) {
+      // Offline: clear local bind state so scan/connect starts fresh.
+      await forgetLocalDevice();
+      return;
+    }
     await _send(DeviceCommands.unbind(), label: '正在解绑…');
+  }
+
+  /// Drop local binding + BLE without waiting for a device ACK.
+  /// Use when the bean is offline, or after a successful unbind ACK.
+  Future<void> forgetLocalDevice() async {
+    _explicitDisconnect = true;
+    _resetBoundReconnectBackoff();
+    _postBindFileRefreshTimer?.cancel();
+    _pendingBindRequest = null;
+    bound = false;
+    lastKnownDevice = null;
+    lastKnownInfo = null;
+    activeDevice = null;
+    info = null;
+    statusMessage = '已解除绑定';
+    await DeviceStore.clear();
+    if (_ble.isConnected || connected) {
+      await _ble.disconnect();
+      connected = false;
+      recording = false;
+      phase = AppPhase.idle;
+      await BackgroundSyncService.stop();
+    }
+    notifyListeners();
   }
 
   Future<void> resetDevice() =>
@@ -4348,14 +4377,12 @@ class RecorderController extends ChangeNotifier {
         if (_pendingBindRequest == false) {
           // Unbind ACK
           if (ok) {
-            bound = false;
             statusMessage = '已解绑（可重新扫描连接）';
-            unawaited(_persistDevice());
-            // Match Feishu: drop link after successful unbind.
+            // Clear local bind so auto-reconnect / UI no longer stick to this unit.
             unawaited(
               Future<void>.delayed(
                 const Duration(milliseconds: 400),
-                () => disconnect(),
+                () => forgetLocalDevice(),
               ),
             );
           } else {

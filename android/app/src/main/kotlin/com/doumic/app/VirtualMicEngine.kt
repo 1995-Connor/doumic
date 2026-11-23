@@ -150,6 +150,8 @@ class VirtualMicEngine(context: Context) : AutoCloseable {
             throw IllegalStateException(lastStatus)
         }
 
+        // Max inject volume — soft bean PCM already needs software gain upstream.
+        runCatching { createdTrack.setVolume(1.0f) }
         createdTrack.play()
         policy = createdPolicy
         track = createdTrack

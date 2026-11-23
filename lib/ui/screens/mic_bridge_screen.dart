@@ -25,6 +25,61 @@ class _MicBridgeScreenState extends State<MicBridgeScreen> {
     MicBridge.instance.ensureInitialized();
   }
 
+  Future<void> _confirmUnbind() async {
+    final c = context.read<RecorderController>();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.bgCard,
+        title: const Text('确认解绑？'),
+        content: Text(
+          c.connected
+              ? '将向录音豆发送解绑指令。\n'
+                  '• 不会清空豆内录音或恢复出厂\n'
+                  '• 成功后断开连接并清除本机绑定\n'
+                  '• 之后可再扫描、连接'
+              : '当前未连上设备，将只清除本机已保存的绑定。\n'
+                  '之后可重新扫描连接；若豆仍显示已绑定，连上后再解绑一次。',
+          style: const TextStyle(
+            color: AppColors.textSecondary,
+            height: 1.4,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('解绑'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    final bridge = MicBridge.instance;
+    if (bridge.enabled) await bridge.setEnabled(false);
+    if (c.recording) await c.pauseRecord();
+    await c.unbindDevice();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(c.statusMessage ?? '已解绑')),
+    );
+  }
+
+  Future<void> _disconnectOnly() async {
+    final c = context.read<RecorderController>();
+    final bridge = MicBridge.instance;
+    if (bridge.enabled) await bridge.setEnabled(false);
+    if (c.recording) await c.pauseRecord();
+    await c.disconnect();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('已断开（仍保留绑定，可自动重连）')),
+    );
+  }
+
   Future<void> _toggleBridge(bool on) async {
     final c = context.read<RecorderController>();
     final bridge = MicBridge.instance;
@@ -70,6 +125,7 @@ class _MicBridgeScreenState extends State<MicBridgeScreen> {
     final c = context.watch<RecorderController>();
     final bridge = context.watch<MicBridge>();
     final connected = c.connected;
+    final bound = c.bound || c.lastKnownDevice != null || connected;
     final level = bridge.level;
     final shizukuOk = bridge.shizuku == 'Shizuku 已就绪';
     final micOk = bridge.virtualMicRunning;
@@ -133,11 +189,43 @@ class _MicBridgeScreenState extends State<MicBridgeScreen> {
                     const SizedBox(height: 8),
                     Text(
                       '电量 ${c.info!.displayBatteryPercent}% · '
-                      '${streaming ? "麦克风推流中" : "待命"}',
+                      '${streaming ? "麦克风推流中" : "待命"}'
+                      '${c.bound ? " · 已绑定" : ""}',
                       style: TextStyle(
                         color: AppColors.textSecondary,
                         fontSize: 13,
                       ),
+                    ),
+                  ] else if (bound && !connected) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      c.bound ? '已绑定（离线）· 可解绑或重新扫描' : '曾连接过此设备',
+                      style: TextStyle(
+                        color: AppColors.textSecondary,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ],
+                  if (bound) ...[
+                    const SizedBox(height: 12),
+                    Wrap(
+                      spacing: 10,
+                      runSpacing: 10,
+                      children: [
+                        if (connected)
+                          OutlinedButton(
+                            onPressed: c.phase == AppPhase.busy
+                                ? null
+                                : _disconnectOnly,
+                            child: const Text('断开连接'),
+                          ),
+                        FilledButton.tonal(
+                          onPressed: c.phase == AppPhase.busy
+                              ? null
+                              : _confirmUnbind,
+                          child: const Text('解绑设备'),
+                        ),
+                      ],
                     ),
                   ],
                 ],
@@ -278,10 +366,68 @@ class _MicBridgeScreenState extends State<MicBridgeScreen> {
                   const SizedBox(height: 8),
                   Text(
                     bridge.enabled
-                        ? '电平 ${(level * 100).round()}% · 已推送 ${(bridge.pcmBytesForwarded / 1024).toStringAsFixed(1)} KB'
+                        ? '电平 ${(level * 100).round()}% · 增益 ×${bridge.appliedGain.toStringAsFixed(1)} · '
+                            '已推送 ${(bridge.pcmBytesForwarded / 1024).toStringAsFixed(1)} KB'
                         : '开启后：录音豆 → 手机系统麦克风',
                     style: TextStyle(color: AppColors.textMuted, fontSize: 12),
                   ),
+                  const SizedBox(height: 14),
+                  Row(
+                    children: [
+                      const Expanded(
+                        child: Text(
+                          '麦克风增益（小声优化）',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w600,
+                            fontSize: 14,
+                          ),
+                        ),
+                      ),
+                      Text(
+                        bridge.autoGain ? '自动' : '手动',
+                        style: TextStyle(
+                          color: AppColors.textSecondary,
+                          fontSize: 12,
+                        ),
+                      ),
+                      Switch.adaptive(
+                        value: bridge.autoGain,
+                        onChanged: bridge.setAutoGain,
+                      ),
+                    ],
+                  ),
+                  Text(
+                    '录音豆没有手机麦那套系统 AGC。小声时 Typeless 等输入法可能判成「无声」——自动增益会把电平抬到接近手机麦。',
+                    style: TextStyle(
+                      color: AppColors.textMuted,
+                      fontSize: 12,
+                      height: 1.4,
+                    ),
+                  ),
+                  if (!bridge.autoGain) ...[
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Text(
+                          '×${bridge.manualGain.toStringAsFixed(1)}',
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w600,
+                            fontSize: 13,
+                          ),
+                        ),
+                        Expanded(
+                          child: Slider(
+                            value: bridge.manualGain.clamp(1.0, 16.0),
+                            min: 1,
+                            max: 16,
+                            divisions: 30,
+                            label: '×${bridge.manualGain.toStringAsFixed(1)}',
+                            onChanged: bridge.setManualGain,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
                   if (bridge.lastError != null) ...[
                     const SizedBox(height: 8),
                     Text(
