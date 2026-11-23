@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -80,6 +81,8 @@ class _MicBridgeScreenState extends State<MicBridgeScreen> {
     );
   }
 
+  bool get _isMac => defaultTargetPlatform == TargetPlatform.macOS;
+
   Future<void> _toggleBridge(bool on) async {
     final c = context.read<RecorderController>();
     final bridge = MicBridge.instance;
@@ -91,12 +94,23 @@ class _MicBridgeScreenState extends State<MicBridgeScreen> {
         return;
       }
       await bridge.refreshStatus();
-      if (bridge.shizuku != 'Shizuku 已就绪') {
+      if (!_isMac && bridge.shizuku != 'Shizuku 已就绪') {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
               '还不能开启虚拟麦：${bridge.shizuku}\n'
               '请先完成 Shizuku「配对 → 启动 → 授权」',
+            ),
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
+      if (_isMac && !bridge.shizuku.contains('已检测到')) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              '${bridge.shizuku}\n'
+              '先安装 BlackHole 2ch，再打开虚拟麦',
             ),
             duration: const Duration(seconds: 4),
           ),
@@ -127,7 +141,9 @@ class _MicBridgeScreenState extends State<MicBridgeScreen> {
     final connected = c.connected;
     final bound = c.bound || c.lastKnownDevice != null || connected;
     final level = bridge.level;
-    final shizukuOk = bridge.shizuku == 'Shizuku 已就绪';
+    final shizukuOk = _isMac
+        ? bridge.shizuku.contains('已检测到')
+        : bridge.shizuku == 'Shizuku 已就绪';
     final micOk = bridge.virtualMicRunning;
     final streaming = bridge.enabled && c.recording;
 
@@ -236,13 +252,20 @@ class _MicBridgeScreenState extends State<MicBridgeScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text(
-                    '① Shizuku（配对 → 启动 → 授权）',
-                    style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
+                  Text(
+                    _isMac
+                        ? '① 虚拟声卡（BlackHole）'
+                        : '① Shizuku（配对 → 启动 → 授权）',
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 16,
+                    ),
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    '「配对」和「启动」是两步。只配对不算运行；必须看到 Shizuku「正在运行」后才能开麦。',
+                    _isMac
+                        ? 'macOS 允许真正的虚拟麦克风。豆麦把录音豆的声音播放进 BlackHole；Typeless / Zoom 把麦克风选成 BlackHole 即可。'
+                        : '「配对」和「启动」是两步。只配对不算运行；必须看到 Shizuku「正在运行」后才能开麦。',
                     style: TextStyle(
                       color: AppColors.textSecondary,
                       height: 1.45,
@@ -251,11 +274,16 @@ class _MicBridgeScreenState extends State<MicBridgeScreen> {
                   ),
                   const SizedBox(height: 10),
                   Text(
-                    'A. 开发者选项里打开 USB 调试 + 无线调试\n'
-                    '   （小米/红米再开「USB 调试（安全设置）」）\n'
-                    'B. Shizuku → 配对 → 系统「配对码」填进通知（通常一次）\n'
-                    'C. Shizuku → 启动 → 显示「正在运行」（每次重启都要）\n'
-                    'D. 回到豆麦 → 授权豆麦',
+                    _isMac
+                        ? 'A. brew install blackhole-2ch（或官网安装）\n'
+                            'B. 「音频 MIDI 设置」里确认有 BlackHole 2ch\n'
+                            'C. 豆麦连接录音豆 → 打开虚拟麦\n'
+                            'D. Typeless 麦克风选 BlackHole 2ch'
+                        : 'A. 开发者选项里打开 USB 调试 + 无线调试\n'
+                            '   （小米/红米再开「USB 调试（安全设置）」）\n'
+                            'B. Shizuku → 配对 → 系统「配对码」填进通知（通常一次）\n'
+                            'C. Shizuku → 启动 → 显示「正在运行」（每次重启都要）\n'
+                            'D. 回到豆麦 → 授权豆麦',
                     style: TextStyle(
                       color: AppColors.textSecondary,
                       height: 1.5,
@@ -292,16 +320,17 @@ class _MicBridgeScreenState extends State<MicBridgeScreen> {
                     children: [
                       FilledButton.tonal(
                         onPressed: bridge.openShizukuApp,
-                        child: const Text('打开 Shizuku'),
+                        child: Text(_isMac ? '打开 BlackHole 下载页' : '打开 Shizuku'),
                       ),
                       OutlinedButton(
                         onPressed: bridge.openDeveloperOptions,
-                        child: const Text('开发者选项'),
+                        child: Text(_isMac ? '音频 MIDI 设置' : '开发者选项'),
                       ),
-                      FilledButton(
-                        onPressed: bridge.requestShizukuPermission,
-                        child: const Text('授权豆麦'),
-                      ),
+                      if (!_isMac)
+                        FilledButton(
+                          onPressed: bridge.requestShizukuPermission,
+                          child: const Text('授权豆麦'),
+                        ),
                       OutlinedButton(
                         onPressed: bridge.refreshStatus,
                         child: const Text('刷新状态'),
@@ -520,9 +549,13 @@ class _MicBridgeScreenState extends State<MicBridgeScreen> {
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    '你的判断是对的：对着录音豆说话时，Typeless 波形就该跳。豆麦界面上的电平只说明「豆→App」有声音，不保证「App→Typeless」已接上。\n\n'
-                    '系统蓝牙里看不到这支麦是正常的——它不是经典蓝牙通话麦，而是用 Shizuku 把 PCM 冒充成手机内置麦。\n\n'
-                    '看上方绿色提示「有 App 正在从注入通路采麦」+ 捂住手机麦只对豆说话：波形跳才算真正走通。',
+                    _isMac
+                        ? '1. Typeless（或任意 App）麦克风选 BlackHole 2ch\n'
+                            '2. 豆麦虚拟麦已开，对着录音豆说话\n'
+                            '3. Typeless 波形应跳动——这就是系统级虚拟麦\n\n'
+                            '也可点「注入测试音」：不用说话，Typeless 选 BlackHole 后波形应跳一下。'
+                        : '你的判断是对的：对着录音豆说话时，Typeless 波形就该跳。豆麦界面上的电平只说明「豆→App」有声音，不保证「App→Typeless」已接上。\n\n'
+                            'Android 上蓝牙列表看不到豆是正常的。很多国产 ROM 不会真正替换硬件麦。',
                     style: TextStyle(
                       color: AppColors.textSecondary,
                       height: 1.5,
@@ -543,11 +576,15 @@ class _MicBridgeScreenState extends State<MicBridgeScreen> {
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    '· 这是独立麦克风 App，不是 Soundcore Manager / 录音管理器\n'
-                    '· 需要 Android 13+ 与 Shizuku\n'
-                    '· 请先退出飞书等占用录音豆的 App\n'
-                    '· 蓝牙设置不显示连接是正常的\n'
-                    '· 设备指示灯亮起只表示正在向手机推流，本 App 不保存录音文件',
+                    _isMac
+                        ? '· macOS 演示路径：录音豆 → 豆麦 → BlackHole → Typeless\n'
+                            '· 请先退出飞书等占用录音豆的 App\n'
+                            '· 不要把系统「声音输出」设成 BlackHole，否则喇叭没声；只让 Typeless 的输入选它\n'
+                            '· 详见 MACOS.md'
+                        : '· 这是独立麦克风 App，不是 Soundcore Manager / 录音管理器\n'
+                            '· Android 需要 13+ 与 Shizuku；国产 ROM 常无法真正替换系统麦\n'
+                            '· 演示系统级虚拟麦请用 macOS + BlackHole（见 MACOS.md）\n'
+                            '· 请先退出飞书等占用录音豆的 App',
                     style: TextStyle(
                       color: AppColors.textSecondary,
                       height: 1.5,

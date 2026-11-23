@@ -24,8 +24,16 @@
 
 ## 要求
 
+**演示系统级虚拟麦（推荐）→ macOS**
+
+- Mac + [BlackHole 2ch](https://existential.audio/blackhole/)
+- 见 [`MACOS.md`](MACOS.md)：`flutter run -d macos`，Typeless 麦克风选 BlackHole
+
+**Android（受限）**
+
 - Android 13+
 - [Shizuku](https://shizuku.rikka.app/zh-hans/guide/setup/)（无线调试，无需 Root）
+- 许多国产 ROM **无法**真正替换硬件麦；不要用 Android 演示「系统麦被替换」
 
 ## 安装
 

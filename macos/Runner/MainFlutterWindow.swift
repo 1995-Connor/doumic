@@ -13,6 +13,7 @@ class MainFlutterWindow: NSWindow {
     self.center()
 
     RegisterGeneratedPlugins(registry: flutterViewController)
+    MacMicBridge.shared.register(with: flutterViewController)
 
     super.awakeFromNib()
   }
