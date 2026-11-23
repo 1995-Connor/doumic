@@ -34,6 +34,11 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        // Real phones are arm64; bundling armeabi-v7a + x86_64 tripled APK size (~50MB+).
+        ndk {
+            abiFilters.clear()
+            abiFilters += listOf("arm64-v8a")
+        }
     }
 
     signingConfigs {
@@ -61,6 +66,12 @@ android {
         }
         release {
             signingConfig = signingConfigs.getByName("doumic")
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
         }
     }
 }

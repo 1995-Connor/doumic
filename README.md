@@ -27,6 +27,9 @@
 
 ## 安装
 
+Release APK 仅含 **arm64-v8a**（近些年手机都是这个架构）。体积主要来自 Flutter 引擎本身，与业务功能多少关系不大。
+
+
 [`releases/doumai-release.apk`](releases/doumai-release.apk)
 
 ```bash
