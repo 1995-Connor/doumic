@@ -13,9 +13,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
 /**
- * Shared host between Flutter, [MicBridgeService], and [BeanMicImeService].
- *
- * Holds the latest PCM ring buffer and relays dictation text / control events.
+ * Shared host between Flutter, virtual-mic injection, and optional IME.
  */
 object MicBridgeHost {
     const val METHOD_CHANNEL = "com.anker.anker_recorder/mic_bridge"
@@ -28,7 +26,6 @@ object MicBridgeHost {
     @Volatile
     private var eventSink: EventChannel.EventSink? = null
 
-    /** Newest PCM16 LE mono bytes (16 kHz). Cap ~2s @ 16kHz mono = 64KB. */
     private val pcmLock = Any()
     private var pcmRing = ByteArray(64 * 1024)
     private var pcmWrite = 0
@@ -38,6 +35,9 @@ object MicBridgeHost {
     private val finalText = AtomicReference<String?>(null)
 
     var textListener: ((partial: String?, finalText: String?) -> Unit)? = null
+
+    @Volatile
+    var appContext: Context? = null
 
     fun isEnabled(): Boolean = enabled.get()
 
@@ -71,7 +71,33 @@ object MicBridgeHost {
             "setEnabled" -> {
                 val on = call.argument<Boolean>("enabled") == true
                 enabled.set(on)
-                result.success(null)
+                VirtualMicController.setEnabled(on)
+                result.success(
+                    mapOf(
+                        "virtualMic" to VirtualMicController.statusMessage,
+                        "running" to VirtualMicController.isRunning(),
+                        "shizuku" to VirtualMicController.shizukuState(),
+                    ),
+                )
+            }
+            "getVirtualMicStatus" -> {
+                result.success(
+                    mapOf(
+                        "message" to VirtualMicController.statusMessage,
+                        "running" to VirtualMicController.isRunning(),
+                        "shizuku" to VirtualMicController.shizukuState(),
+                        "enabled" to enabled.get(),
+                    ),
+                )
+            }
+            "requestShizukuPermission" -> {
+                val ok = VirtualMicController.requestShizukuPermission()
+                result.success(
+                    mapOf(
+                        "ok" to ok,
+                        "shizuku" to VirtualMicController.shizukuState(),
+                    ),
+                )
             }
             "pushPcm" -> {
                 val bytes = call.arguments as? ByteArray
@@ -115,11 +141,10 @@ object MicBridgeHost {
         }
     }
 
-    @Volatile
-    var appContext: Context? = null
-
     fun pushPcm(bytes: ByteArray) {
         if (bytes.isEmpty()) return
+        // Always feed the system virtual mic when bridge is on.
+        VirtualMicController.writePcm16k(bytes)
         synchronized(pcmLock) {
             var offset = 0
             while (offset < bytes.size) {
@@ -133,7 +158,6 @@ object MicBridgeHost {
         }
     }
 
-    /** Copy up to [maxBytes] of the newest PCM into [out]; returns bytes copied. */
     fun readLatestPcm(out: ByteArray, maxBytes: Int): Int {
         synchronized(pcmLock) {
             val n = minOf(maxBytes, out.size, pcmFilled)
@@ -145,13 +169,6 @@ object MicBridgeHost {
                 System.arraycopy(pcmRing, 0, out, first, n - first)
             }
             return n
-        }
-    }
-
-    fun clearPcm() {
-        synchronized(pcmLock) {
-            pcmWrite = 0
-            pcmFilled = 0
         }
     }
 
@@ -170,6 +187,17 @@ object MicBridgeHost {
     fun consumeFinalText(): String? = finalText.getAndSet(null)
 
     fun currentPartial(): String = partialText.get()
+
+    fun emitStatus(message: String, running: Boolean) {
+        emit(
+            mapOf(
+                "type" to "virtualMicStatus",
+                "message" to message,
+                "running" to running,
+                "shizuku" to VirtualMicController.shizukuState(),
+            ),
+        )
+    }
 
     private fun emit(event: Map<String, Any?>) {
         mainHandler.post {

@@ -7,7 +7,7 @@ import '../../state/recorder_controller.dart';
 import '../../theme/app_theme.dart';
 import '../widgets/scan_sheet.dart';
 
-/// Turn the D3200 into a voice-input mic via the 豆麦 IME.
+/// System virtual microphone: D3200 audio → phone mic for any app.
 class MicBridgeScreen extends StatefulWidget {
   const MicBridgeScreen({super.key});
 
@@ -46,13 +46,8 @@ class _MicBridgeScreenState extends State<MicBridgeScreen> {
                 : c.transcript)
             .trim();
     MicBridge.instance.beginDictation(live);
-    if (!c.connected) {
-      await MicBridge.instance.pushPartialText('请先连接录音豆');
-      return;
-    }
-    if (!c.recording) {
-      await c.startRecord();
-    }
+    if (!c.connected) return;
+    if (!c.recording) await c.startRecord();
   }
 
   Future<void> _handleDictationStop() async {
@@ -64,7 +59,6 @@ class _MicBridgeScreenState extends State<MicBridgeScreen> {
                 : c.transcript)
             .trim();
     await MicBridge.instance.syncTranscript(live, isFinal: true);
-    // Keep recording so the next dictation is low-latency; user can stop on Device tab.
   }
 
   Future<void> _toggleBridge(bool on) async {
@@ -79,9 +73,8 @@ class _MicBridgeScreenState extends State<MicBridgeScreen> {
       }
       await bridge.setEnabled(true);
       await BackgroundSyncService.start();
-      if (!c.recording) {
-        await c.startRecord();
-      }
+      if (!c.recording) await c.startRecord();
+      await bridge.refreshStatus();
     } else {
       await bridge.setEnabled(false);
     }
@@ -93,6 +86,8 @@ class _MicBridgeScreenState extends State<MicBridgeScreen> {
     final bridge = context.watch<MicBridge>();
     final connected = c.connected;
     final level = bridge.level;
+    final shizukuOk = bridge.shizuku == 'Shizuku 已就绪';
+    final micOk = bridge.virtualMicRunning;
 
     return Scaffold(
       backgroundColor: AppColors.bg,
@@ -110,7 +105,7 @@ class _MicBridgeScreenState extends State<MicBridgeScreen> {
             ),
             const SizedBox(height: 6),
             Text(
-              '把安克录音豆变成语音输入麦克风。Android 无法把第三方 BLE 设备注册成系统麦，因此通过「豆麦输入法」在任意输入框里用录音豆收音并上屏。',
+              '把录音豆变成手机的系统麦克风。开启后，搜狗/系统语音输入、腾讯会议、Zoom 等 App 开麦时，采到的就是录音豆的声音。',
               style: TextStyle(
                 color: AppColors.textSecondary,
                 height: 1.45,
@@ -152,7 +147,7 @@ class _MicBridgeScreenState extends State<MicBridgeScreen> {
                     const SizedBox(height: 8),
                     Text(
                       '电量 ${c.info!.displayBatteryPercent}% · '
-                      '${c.recording ? "录音中" : "待命"}',
+                      '${c.recording ? "录音中（推流中）" : "待命"}',
                       style: TextStyle(
                         color: AppColors.textSecondary,
                         fontSize: 13,
@@ -167,11 +162,84 @@ class _MicBridgeScreenState extends State<MicBridgeScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  const Text(
+                    '① 准备 Shizuku（一次性）',
+                    style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Android 不允许普通 App 注册系统麦克风。豆麦通过 Shizuku（无线调试，无需 Root）以 shell 权限注册 AudioPolicy，把录音豆 PCM 注入成系统麦。',
+                    style: TextStyle(
+                      color: AppColors.textSecondary,
+                      height: 1.45,
+                      fontSize: 13,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    '1. 安装并打开 Shizuku\n'
+                    '2. 用「无线调试」启动（Android 11+，每次重启后需重新启动）\n'
+                    '3. 回到本页授权',
+                    style: TextStyle(
+                      color: AppColors.textSecondary,
+                      height: 1.5,
+                      fontSize: 13,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Icon(
+                        shizukuOk ? Icons.check_circle : Icons.info_outline,
+                        size: 18,
+                        color: shizukuOk ? AppColors.mint : AppColors.amber,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          bridge.shizuku,
+                          style: TextStyle(
+                            color: shizukuOk
+                                ? AppColors.mint
+                                : AppColors.textSecondary,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: FilledButton.tonal(
+                          onPressed: bridge.requestShizukuPermission,
+                          child: const Text('授权 Shizuku'),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: bridge.refreshStatus,
+                          child: const Text('刷新状态'),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+            _Card(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
                   Row(
                     children: [
                       const Expanded(
                         child: Text(
-                          '麦克风桥接',
+                          '② 开启系统虚拟麦克风',
                           style: TextStyle(
                             fontWeight: FontWeight.w700,
                             fontSize: 16,
@@ -185,9 +253,24 @@ class _MicBridgeScreenState extends State<MicBridgeScreen> {
                     ],
                   ),
                   const SizedBox(height: 8),
-                  Text(
-                    bridge.status,
-                    style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
+                  Row(
+                    children: [
+                      Icon(
+                        micOk ? Icons.mic : Icons.mic_off,
+                        size: 18,
+                        color: micOk ? AppColors.coral : AppColors.textMuted,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          bridge.status,
+                          style: TextStyle(
+                            color: AppColors.textSecondary,
+                            fontSize: 13,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 14),
                   ClipRRect(
@@ -203,14 +286,17 @@ class _MicBridgeScreenState extends State<MicBridgeScreen> {
                   Text(
                     bridge.enabled
                         ? '实时电平 ${(level * 100).round()}% · 已转发 ${(bridge.pcmBytesForwarded / 1024).toStringAsFixed(1)} KB'
-                        : '开启后开始从录音豆拉取实时音频',
+                        : '开启后：录音豆 → 系统麦克风',
                     style: TextStyle(color: AppColors.textMuted, fontSize: 12),
                   ),
                   if (bridge.lastError != null) ...[
                     const SizedBox(height: 8),
                     Text(
                       bridge.lastError!,
-                      style: const TextStyle(color: AppColors.coral, fontSize: 12),
+                      style: const TextStyle(
+                        color: AppColors.coral,
+                        fontSize: 12,
+                      ),
                     ),
                   ],
                 ],
@@ -222,38 +308,20 @@ class _MicBridgeScreenState extends State<MicBridgeScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Text(
-                    '启用豆麦输入法',
+                    '③ 在其他 App 里用',
                     style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    '1. 在系统设置中启用「豆麦输入法」\n'
-                    '2. 在任意 App 的输入框切换到豆麦\n'
-                    '3. 按住麦克风键说话，松手后文字上屏\n'
-                    '4. 转写使用设置里配置的 Soniox（需 API Key）',
+                    '保持豆麦在后台运行（会有常驻通知）。然后：\n'
+                    '· 语音输入法：直接按原有语音键，无需切换输入法\n'
+                    '· 线上会议：在腾讯会议 / Zoom / 飞书里正常开麦\n'
+                    '系统会把录音豆当成默认麦克风来源（MIC / 语音识别 / 通话采集）。',
                     style: TextStyle(
                       color: AppColors.textSecondary,
                       height: 1.5,
                       fontSize: 13,
                     ),
-                  ),
-                  const SizedBox(height: 14),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: FilledButton.tonal(
-                          onPressed: bridge.openImeSettings,
-                          child: const Text('打开输入法设置'),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: FilledButton(
-                          onPressed: bridge.showImePicker,
-                          child: const Text('切换输入法'),
-                        ),
-                      ),
-                    ],
                   ),
                 ],
               ),
@@ -264,15 +332,16 @@ class _MicBridgeScreenState extends State<MicBridgeScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Text(
-                    '说明',
+                    '说明与限制',
                     style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    '录音豆通过 BLE 传输 Opus 音频，不是经典蓝牙 HFP 耳机，'
-                    '所以微信/系统自带语音键无法直接选它当麦克风。'
-                    '豆麦输入法是无 Root 前提下，把录音豆收音接到「语音输入」的可行方案。'
-                    '请保持本应用在后台运行（会显示常驻通知）。',
+                    '· 需要 Android 13+\n'
+                    '· 需要 Shizuku；每次重启手机后重新启动 Shizuku\n'
+                    '· 部分厂商 ROM 对动态 AudioPolicy 兼容性不一，若会议仍走手机麦，请反馈机型\n'
+                    '· 请先退出飞书等占用录音豆的 App\n'
+                    '· 「豆麦输入法」仍保留为备用，不是主路径',
                     style: TextStyle(
                       color: AppColors.textSecondary,
                       height: 1.5,

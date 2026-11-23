@@ -3,23 +3,27 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
-/// Bridges D3200 realtime PCM into the Android 豆麦 IME / foreground service.
+/// Bridges D3200 realtime PCM into a **system-wide virtual microphone**.
 ///
-/// Android cannot register a third-party BLE device as a system microphone
-/// without root. This bridge feeds decoded PCM + dictation text to a custom
-/// input method so voice typing still uses the bean's mics.
+/// On Android 13+, with Shizuku (wireless debugging), we register an AudioPolicy
+/// injector so 搜狗 / 系统语音 / 腾讯会议 / Zoom etc. read the bean's audio
+/// as if it were the phone mic. Stock Android cannot do this without privilege.
 class MicBridge extends ChangeNotifier {
   MicBridge._();
   static final MicBridge instance = MicBridge._();
 
   static const _method = MethodChannel('com.anker.anker_recorder/mic_bridge');
-  static const _events = EventChannel('com.anker.anker_recorder/mic_bridge_events');
+  static const _events = EventChannel(
+    'com.anker.anker_recorder/mic_bridge_events',
+  );
 
   bool _enabled = false;
   bool _nativeReady = false;
+  bool _virtualMicRunning = false;
   bool _dictating = false;
   double _level = 0;
   String _status = '未启用';
+  String _shizuku = '未知';
   String? _partialText;
   String? _lastError;
   String _dictationBaseline = '';
@@ -28,15 +32,16 @@ class MicBridge extends ChangeNotifier {
 
   bool get enabled => _enabled;
   bool get nativeReady => _nativeReady;
+  bool get virtualMicRunning => _virtualMicRunning;
   bool get dictating => _dictating;
   double get level => _level;
   String get status => _status;
+  String get shizuku => _shizuku;
   String? get partialText => _partialText;
   String? get lastError => _lastError;
   int get pcmBytesForwarded => _pcmBytesForwarded;
   String get dictationBaseline => _dictationBaseline;
 
-  /// Called by UI / IME via native → Flutter when user starts/stops dictation.
   void Function()? onDictationStart;
   void Function()? onDictationStop;
 
@@ -52,6 +57,7 @@ class MicBridge extends ChangeNotifier {
     try {
       final ready = await _method.invokeMethod<bool>('isReady');
       _nativeReady = ready == true;
+      await refreshStatus();
     } catch (e) {
       _nativeReady = false;
       debugPrint('[MicBridge] native not ready: $e');
@@ -59,26 +65,55 @@ class MicBridge extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> refreshStatus() async {
+    try {
+      final map = await _method.invokeMethod<Map>('getVirtualMicStatus');
+      if (map != null) {
+        _status = map['message']?.toString() ?? _status;
+        _virtualMicRunning = map['running'] == true;
+        _shizuku = map['shizuku']?.toString() ?? _shizuku;
+        _enabled = map['enabled'] == true || _enabled;
+      }
+    } catch (_) {}
+    notifyListeners();
+  }
+
+  Future<void> requestShizukuPermission() async {
+    try {
+      final map = await _method.invokeMethod<Map>('requestShizukuPermission');
+      _shizuku = map?['shizuku']?.toString() ?? _shizuku;
+    } catch (e) {
+      _lastError = '请求 Shizuku 授权失败: $e';
+    }
+    notifyListeners();
+  }
+
   Future<void> setEnabled(bool value) async {
     await ensureInitialized();
     _enabled = value;
-    _status = value ? '麦克风桥接已开启' : '未启用';
     _lastError = null;
+    _status = value ? '正在启动系统虚拟麦克风…' : '未启用';
+    notifyListeners();
     try {
-      await _method.invokeMethod<void>('setEnabled', {'enabled': value});
+      final map = await _method.invokeMethod<Map>('setEnabled', {
+        'enabled': value,
+      });
+      if (map != null) {
+        _status = map['virtualMic']?.toString() ?? _status;
+        _virtualMicRunning = map['running'] == true;
+        _shizuku = map['shizuku']?.toString() ?? _shizuku;
+      }
     } catch (e) {
-      _lastError = '无法通知系统服务: $e';
+      _lastError = '无法启动虚拟麦克风: $e';
       debugPrint('[MicBridge] setEnabled failed: $e');
     }
     notifyListeners();
   }
 
-  /// Push one PCM16 LE mono frame (typically 16 kHz) to the Android bridge.
   void pushPcm(Uint8List pcm) {
     if (!_enabled || pcm.isEmpty) return;
     _updateLevel(pcm);
     _pcmBytesForwarded += pcm.length;
-    // Fire-and-forget; drop under backpressure rather than block BLE decode.
     unawaited(
       _method.invokeMethod<void>('pushPcm', pcm).catchError((Object e) {
         if (_lastError == null) {
@@ -89,7 +124,6 @@ class MicBridge extends ChangeNotifier {
     );
   }
 
-  /// Mark the transcript length at the moment the IME starts holding.
   void beginDictation(String currentTranscript) {
     _dictationBaseline = currentTranscript.trim();
     _partialText = null;
@@ -97,7 +131,6 @@ class MicBridge extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Live STT text → IME preview, only the portion after [dictationBaseline].
   Future<void> syncTranscript(String fullText, {bool isFinal = false}) async {
     if (!_dictating && !isFinal) return;
     final delta = _deltaFrom(fullText);
@@ -160,15 +193,19 @@ class MicBridge extends ChangeNotifier {
     switch (type) {
       case 'dictationStart':
         _dictating = true;
-        _status = '正在听写…';
         notifyListeners();
         onDictationStart?.call();
         break;
       case 'dictationStop':
         _dictating = false;
-        _status = _enabled ? '麦克风桥接已开启' : '未启用';
         notifyListeners();
         onDictationStop?.call();
+        break;
+      case 'virtualMicStatus':
+        _status = event['message']?.toString() ?? _status;
+        _virtualMicRunning = event['running'] == true;
+        _shizuku = event['shizuku']?.toString() ?? _shizuku;
+        notifyListeners();
         break;
       case 'imeStatus':
         _status = event['message']?.toString() ?? _status;
@@ -188,7 +225,6 @@ class MicBridge extends ChangeNotifier {
       if (v > peak) peak = v;
     }
     _level = (peak / 32768.0).clamp(0.0, 1.0);
-    // Throttle UI updates.
     if (pcm.length >= 640) notifyListeners();
   }
 

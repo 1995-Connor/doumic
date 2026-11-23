@@ -9,6 +9,7 @@ class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         MicBridgeHost.appContext = applicationContext
+        VirtualMicController.init(applicationContext)
 
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
