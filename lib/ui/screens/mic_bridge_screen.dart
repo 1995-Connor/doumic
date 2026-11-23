@@ -7,7 +7,10 @@ import '../../state/recorder_controller.dart';
 import '../../theme/app_theme.dart';
 import '../widgets/scan_sheet.dart';
 
-/// System virtual microphone: D3200 audio → phone mic for any app.
+/// Standalone DouMic home: connect D3200 → system virtual microphone.
+///
+/// This is intentionally not a recording manager. Device "record" is only used
+/// under the hood so the bean starts streaming Opus over BLE.
 class MicBridgeScreen extends StatefulWidget {
   const MicBridgeScreen({super.key});
 
@@ -19,46 +22,7 @@ class _MicBridgeScreenState extends State<MicBridgeScreen> {
   @override
   void initState() {
     super.initState();
-    final bridge = MicBridge.instance;
-    bridge.ensureInitialized();
-    bridge.onDictationStart = _handleDictationStart;
-    bridge.onDictationStop = _handleDictationStop;
-  }
-
-  @override
-  void dispose() {
-    final bridge = MicBridge.instance;
-    if (bridge.onDictationStart == _handleDictationStart) {
-      bridge.onDictationStart = null;
-    }
-    if (bridge.onDictationStop == _handleDictationStop) {
-      bridge.onDictationStop = null;
-    }
-    super.dispose();
-  }
-
-  Future<void> _handleDictationStart() async {
-    if (!mounted) return;
-    final c = context.read<RecorderController>();
-    final live =
-        (c.transcriptPartial?.isNotEmpty == true
-                ? c.transcriptPartial!
-                : c.transcript)
-            .trim();
-    MicBridge.instance.beginDictation(live);
-    if (!c.connected) return;
-    if (!c.recording) await c.startRecord();
-  }
-
-  Future<void> _handleDictationStop() async {
-    if (!mounted) return;
-    final c = context.read<RecorderController>();
-    final live =
-        (c.transcriptPartial?.isNotEmpty == true
-                ? c.transcriptPartial!
-                : c.transcript)
-            .trim();
-    await MicBridge.instance.syncTranscript(live, isFinal: true);
+    MicBridge.instance.ensureInitialized();
   }
 
   Future<void> _toggleBridge(bool on) async {
@@ -82,10 +46,10 @@ class _MicBridgeScreenState extends State<MicBridgeScreen> {
             duration: const Duration(seconds: 4),
           ),
         );
-        // Still attempt so native side updates status text.
       }
       await bridge.setEnabled(true);
       await BackgroundSyncService.start();
+      // Hardware must be in capture mode to emit realtime Opus frames.
       if (!c.recording) await c.startRecord();
       await bridge.refreshStatus();
       if (!bridge.virtualMicRunning && mounted) {
@@ -95,6 +59,9 @@ class _MicBridgeScreenState extends State<MicBridgeScreen> {
       }
     } else {
       await bridge.setEnabled(false);
+      if (c.recording) {
+        await c.pauseRecord();
+      }
     }
   }
 
@@ -106,6 +73,7 @@ class _MicBridgeScreenState extends State<MicBridgeScreen> {
     final level = bridge.level;
     final shizukuOk = bridge.shizuku == 'Shizuku 已就绪';
     final micOk = bridge.virtualMicRunning;
+    final streaming = bridge.enabled && c.recording;
 
     return Scaffold(
       backgroundColor: AppColors.bg,
@@ -123,7 +91,7 @@ class _MicBridgeScreenState extends State<MicBridgeScreen> {
             ),
             const SizedBox(height: 6),
             Text(
-              '把录音豆变成手机的系统麦克风。开启后，搜狗/系统语音输入、腾讯会议、Zoom 等 App 开麦时，采到的就是录音豆的声音。',
+              '独立的录音豆系统麦克风。只做一件事：把安克 D3200 的声音接到手机麦克风通路，供语音输入和线上会议使用。',
               style: TextStyle(
                 color: AppColors.textSecondary,
                 height: 1.45,
@@ -165,7 +133,7 @@ class _MicBridgeScreenState extends State<MicBridgeScreen> {
                     const SizedBox(height: 8),
                     Text(
                       '电量 ${c.info!.displayBatteryPercent}% · '
-                      '${c.recording ? "录音中（推流中）" : "待命"}',
+                      '${streaming ? "麦克风推流中" : "待命"}',
                       style: TextStyle(
                         color: AppColors.textSecondary,
                         fontSize: 13,
@@ -181,12 +149,12 @@ class _MicBridgeScreenState extends State<MicBridgeScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Text(
-                    '① 准备 Shizuku（配对 → 启动 → 授权）',
+                    '① Shizuku（配对 → 启动 → 授权）',
                     style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    '「配对」和「启动」是两步，只配对不算运行。豆麦必须等 Shizuku 顶部显示「正在运行」后才能开虚拟麦。',
+                    '「配对」和「启动」是两步。只配对不算运行；必须看到 Shizuku「正在运行」后才能开麦。',
                     style: TextStyle(
                       color: AppColors.textSecondary,
                       height: 1.45,
@@ -195,22 +163,11 @@ class _MicBridgeScreenState extends State<MicBridgeScreen> {
                   ),
                   const SizedBox(height: 10),
                   Text(
-                    'A. 系统准备\n'
-                    '  · 设置 → 关于手机 → 连续点版本号 7 次，打开开发者选项\n'
-                    '  · 打开「USB 调试」和「无线调试」\n'
-                    '  · 小米/红米还需打开「USB 调试（安全设置）」\n'
-                    '\n'
-                    'B. 配对（通常只需一次）\n'
-                    '  1. 打开 Shizuku → 通过无线调试 → 点「配对」\n'
-                    '  2. 允许通知权限（配对码要在通知里输入）\n'
-                    '  3. 回到系统「无线调试」→「使用配对码配对设备」\n'
-                    '  4. 把 6 位配对码填进 Shizuku 通知，看到「配对成功」\n'
-                    '\n'
-                    'C. 启动（每次重启手机后都要再做）\n'
-                    '  · 在 Shizuku 里点「启动」，等到显示「Shizuku 正在运行」\n'
-                    '\n'
-                    'D. 回到豆麦\n'
-                    '  · 点「授权 Shizuku」，再开下方虚拟麦克风开关',
+                    'A. 开发者选项里打开 USB 调试 + 无线调试\n'
+                    '   （小米/红米再开「USB 调试（安全设置）」）\n'
+                    'B. Shizuku → 配对 → 系统「配对码」填进通知（通常一次）\n'
+                    'C. Shizuku → 启动 → 显示「正在运行」（每次重启都要）\n'
+                    'D. 回到豆麦 → 授权豆麦',
                     style: TextStyle(
                       color: AppColors.textSecondary,
                       height: 1.5,
@@ -275,7 +232,7 @@ class _MicBridgeScreenState extends State<MicBridgeScreen> {
                     children: [
                       const Expanded(
                         child: Text(
-                          '② 开启系统虚拟麦克风',
+                          '② 系统虚拟麦克风',
                           style: TextStyle(
                             fontWeight: FontWeight.w700,
                             fontSize: 16,
@@ -321,8 +278,8 @@ class _MicBridgeScreenState extends State<MicBridgeScreen> {
                   const SizedBox(height: 8),
                   Text(
                     bridge.enabled
-                        ? '实时电平 ${(level * 100).round()}% · 已转发 ${(bridge.pcmBytesForwarded / 1024).toStringAsFixed(1)} KB'
-                        : '开启后：录音豆 → 系统麦克风',
+                        ? '电平 ${(level * 100).round()}% · 已推送 ${(bridge.pcmBytesForwarded / 1024).toStringAsFixed(1)} KB'
+                        : '开启后：录音豆 → 手机系统麦克风',
                     style: TextStyle(color: AppColors.textMuted, fontSize: 12),
                   ),
                   if (bridge.lastError != null) ...[
@@ -344,15 +301,12 @@ class _MicBridgeScreenState extends State<MicBridgeScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Text(
-                    '③ 在其他 App 里用',
+                    '③ 在别的 App 里用',
                     style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    '保持豆麦在后台运行（会有常驻通知）。然后：\n'
-                    '· 语音输入法：直接按原有语音键，无需切换输入法\n'
-                    '· 线上会议：在腾讯会议 / Zoom / 飞书里正常开麦\n'
-                    '系统会把录音豆当成默认麦克风来源（MIC / 语音识别 / 通话采集）。',
+                    '保持豆麦在后台。然后直接用原来的搜狗/系统语音键，或在腾讯会议、Zoom 里正常开麦——不用切换输入法，也不用进录音管理。',
                     style: TextStyle(
                       color: AppColors.textSecondary,
                       height: 1.5,
@@ -368,16 +322,15 @@ class _MicBridgeScreenState extends State<MicBridgeScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Text(
-                    '说明与限制',
+                    '说明',
                     style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    '· 需要 Android 13+\n'
-                    '· 需要 Shizuku；每次重启手机后重新启动 Shizuku\n'
-                    '· 部分厂商 ROM 对动态 AudioPolicy 兼容性不一，若会议仍走手机麦，请反馈机型\n'
+                    '· 这是独立麦克风 App，不是 Soundcore Manager / 录音管理器\n'
+                    '· 需要 Android 13+ 与 Shizuku\n'
                     '· 请先退出飞书等占用录音豆的 App\n'
-                    '· 「豆麦输入法」仍保留为备用，不是主路径',
+                    '· 设备指示灯亮起只表示正在向手机推流，本 App 不保存录音文件',
                     style: TextStyle(
                       color: AppColors.textSecondary,
                       height: 1.5,

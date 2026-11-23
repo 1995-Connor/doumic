@@ -8,17 +8,14 @@ import 'package:provider/provider.dart';
 
 import 'mic/mic_bridge.dart';
 import 'state/recorder_controller.dart';
-import 'platform/recording_shortcut_service.dart';
 import 'theme/app_theme.dart';
-import 'ui/shell.dart';
+import 'ui/screens/mic_bridge_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   if (defaultTargetPlatform == TargetPlatform.iOS ||
       defaultTargetPlatform == TargetPlatform.macOS) {
     try {
-      // Must be set before RecorderController creates BleService. This lets
-      // Core Bluetooth restore active connections after background eviction.
       await FlutterBluePlus.setOptions(restoreState: true);
     } catch (error) {
       debugPrint('[BLE] State restoration setup failed: $error');
@@ -33,40 +30,34 @@ Future<void> main() async {
       systemNavigationBarIconBrightness: Brightness.dark,
     ),
   );
+
   final controller = RecorderController();
+  // DouMic is a mic bridge only — never auto-run cloud transcription.
+  controller.setAutoTranscribe(false);
+
   unawaited(MicBridge.instance.ensureInitialized());
-  runApp(SoundcoreManagerApp(controller: controller));
-  unawaited(
-    RecordingShortcutService.instance.initialize(
-      onStartRecording: controller.requestRecordingFromShortcut,
-    ),
-  );
+  runApp(DouMicApp(controller: controller));
 }
 
-class SoundcoreManagerApp extends StatelessWidget {
-  const SoundcoreManagerApp({super.key, this.controller});
+/// Standalone virtual-mic app for the Anker D3200. Not a recording manager.
+class DouMicApp extends StatelessWidget {
+  const DouMicApp({super.key, required this.controller});
 
-  final RecorderController? controller;
+  final RecorderController controller;
 
   @override
   Widget build(BuildContext context) {
-    final app = MaterialApp(
-      title: '豆麦 · 录音豆麦克风',
-      debugShowCheckedModeBanner: false,
-      theme: AppTheme.light,
-      home: const AppShell(),
-    );
-    final bridge = ChangeNotifierProvider<MicBridge>.value(
-      value: MicBridge.instance,
-      child: app,
-    );
-    final controller = this.controller;
-    if (controller != null) {
-      return ChangeNotifierProvider.value(value: controller, child: bridge);
-    }
-    return ChangeNotifierProvider(
-      create: (_) => RecorderController(),
-      child: bridge,
+    return MultiProvider(
+      providers: [
+        ChangeNotifierProvider.value(value: controller),
+        ChangeNotifierProvider<MicBridge>.value(value: MicBridge.instance),
+      ],
+      child: MaterialApp(
+        title: '豆麦',
+        debugShowCheckedModeBanner: false,
+        theme: AppTheme.light,
+        home: const MicBridgeScreen(),
+      ),
     );
   }
 }

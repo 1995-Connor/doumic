@@ -44,8 +44,7 @@
                 <action android:name="android.intent.action.VIEW"/>
                 <category android:name="android.intent.category.DEFAULT"/>
                 <category android:name="android.intent.category.BROWSABLE"/>
-                <data
-                    android:scheme="soundcore"/>
+                <data android:scheme="doumic"/>
             </intent-filter>
         </activity>
         <service
@@ -53,19 +52,6 @@
             android:exported="false"
             android:foregroundServiceType="connectedDevice"
             android:stopWithTask="true" />
-        <!-- Optional fallback IME; primary path is system virtual mic via Shizuku. -->
-        <service
-            android:name=".BeanMicImeService"
-            android:label="豆麦输入法（备用）"
-            android:permission="android.permission.BIND_INPUT_METHOD"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.view.InputMethod" />
-            </intent-filter>
-            <meta-data
-                android:name="android.view.im"
-                android:resource="@xml/bean_mic_ime" />
-        </service>
         <provider
             android:name="rikka.shizuku.ShizukuProvider"
             android:authorities="${applicationId}.shizuku"
@@ -78,10 +64,6 @@
             android:value="2" />
     </application>
     <queries>
-        <intent>
-            <action android:name="android.intent.action.PROCESS_TEXT"/>
-            <data android:mimeType="text/plain"/>
-        </intent>
         <package android:name="moe.shizuku.privileged.api" />
     </queries>
 </manifest>

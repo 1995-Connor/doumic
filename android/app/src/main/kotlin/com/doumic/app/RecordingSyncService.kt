@@ -62,10 +62,10 @@ class RecordingSyncService : Service() {
         val manager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
         val channel = NotificationChannel(
             CHANNEL_ID,
-            "录音同步",
+            "豆麦麦克风",
             NotificationManager.IMPORTANCE_LOW,
         ).apply {
-            description = "保持蓝牙录音同步在后台运行"
+            description = "保持录音豆虚拟麦克风在后台运行"
             setSound(null, null)
         }
         manager.createNotificationChannel(channel)
@@ -90,8 +90,8 @@ class RecordingSyncService : Service() {
         }
         return builder
             .setSmallIcon(R.drawable.ic_sync_notification)
-            .setContentTitle("安克录音豆")
-            .setContentText("正在后台同步录音")
+            .setContentTitle("豆麦")
+            .setContentText("虚拟麦克风运行中")
             .setCategory(Notification.CATEGORY_SERVICE)
             .setContentIntent(contentIntent)
             .setOngoing(true)
