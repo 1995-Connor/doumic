@@ -2,10 +2,13 @@ package com.doumic.app
 
 import android.content.ComponentName
 import android.content.Context
+import android.content.Intent
 import android.content.ServiceConnection
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.IBinder
+import android.provider.Settings
 import android.util.Log
 import rikka.shizuku.Shizuku
 import java.util.concurrent.atomic.AtomicBoolean
@@ -17,6 +20,7 @@ import java.util.concurrent.atomic.AtomicReference
 object VirtualMicController {
     private const val TAG = "VirtualMicController"
     private const val MIN_SHIZUKU = 11
+    private const val SHIZUKU_PACKAGE = "moe.shizuku.privileged.api"
 
     private val enabled = AtomicBoolean(false)
     private val running = AtomicBoolean(false)
@@ -29,6 +33,16 @@ object VirtualMicController {
     @Volatile
     private var appContext: Context? = null
 
+    private val permissionResultListener =
+        Shizuku.OnRequestPermissionResultListener { _, grantResult ->
+            if (grantResult == PackageManager.PERMISSION_GRANTED) {
+                statusMessage = "Shizuku 授权成功，可开启虚拟麦克风"
+            } else {
+                statusMessage = "Shizuku 授权被拒绝"
+            }
+            notifyFlutter()
+        }
+
     private val userServiceArgs by lazy {
         Shizuku.UserServiceArgs(
             ComponentName(
@@ -39,7 +53,7 @@ object VirtualMicController {
             .daemon(false)
             .processNameSuffix("vmic")
             .debuggable(false)
-            .version(1)
+            .version(2)
     }
 
     private val connection = object : ServiceConnection {
@@ -82,6 +96,15 @@ object VirtualMicController {
     fun init(context: Context) {
         appContext = context.applicationContext
         runCatching { Shizuku.addBinderDeadListener(binderDeadListener) }
+        runCatching { Shizuku.addRequestPermissionResultListener(permissionResultListener) }
+    }
+
+    fun isShizukuInstalled(): Boolean {
+        val ctx = appContext ?: return false
+        return runCatching {
+            ctx.packageManager.getPackageInfo(SHIZUKU_PACKAGE, 0)
+            true
+        }.getOrDefault(false)
     }
 
     fun shizukuState(): String {
@@ -89,12 +112,14 @@ object VirtualMicController {
             when {
                 Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ->
                     "需要 Android 13 及以上"
+                !isShizukuInstalled() ->
+                    "未安装 Shizuku，请先从应用商店安装"
                 !Shizuku.pingBinder() ->
-                    "请先安装并启动 Shizuku（无线调试）"
+                    "Shizuku 未在运行：请先「配对」再点「启动」（配对≠启动）"
                 Shizuku.getVersion() < MIN_SHIZUKU ->
                     "Shizuku 版本过旧，请升级"
                 Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED ->
-                    "需要授权 Shizuku（点下方按钮）"
+                    "Shizuku 已运行，但豆麦尚未授权（点下方「授权」）"
                 else -> "Shizuku 已就绪"
             }
         } catch (e: Exception) {
@@ -104,12 +129,61 @@ object VirtualMicController {
 
     fun requestShizukuPermission(requestCode: Int = 1001): Boolean {
         return try {
-            if (!Shizuku.pingBinder()) return false
-            if (Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) return true
+            if (!Shizuku.pingBinder()) {
+                statusMessage =
+                    "还不能授权：Shizuku 未运行。请在 Shizuku 里先配对，再点启动"
+                notifyFlutter()
+                return false
+            }
+            if (Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) {
+                statusMessage = "Shizuku 已授权"
+                notifyFlutter()
+                return true
+            }
             Shizuku.requestPermission(requestCode)
             true
         } catch (e: Exception) {
             statusMessage = "请求 Shizuku 权限失败: ${e.message}"
+            notifyFlutter()
+            false
+        }
+    }
+
+    fun openShizukuApp(): Boolean {
+        val ctx = appContext ?: return false
+        return try {
+            val launch = ctx.packageManager.getLaunchIntentForPackage(SHIZUKU_PACKAGE)
+            if (launch != null) {
+                launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                ctx.startActivity(launch)
+                true
+            } else {
+                // Fall back to store / package page.
+                val market = Intent(
+                    Intent.ACTION_VIEW,
+                    Uri.parse("market://details?id=$SHIZUKU_PACKAGE"),
+                ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                ctx.startActivity(market)
+                true
+            }
+        } catch (e: Exception) {
+            statusMessage = "无法打开 Shizuku: ${e.message}"
+            notifyFlutter()
+            false
+        }
+    }
+
+    fun openDeveloperOptions(): Boolean {
+        val ctx = appContext ?: return false
+        return try {
+            ctx.startActivity(
+                Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
+            true
+        } catch (e: Exception) {
+            statusMessage = "无法打开开发者选项: ${e.message}"
+            notifyFlutter()
             false
         }
     }

@@ -82,10 +82,30 @@ class MicBridge extends ChangeNotifier {
     try {
       final map = await _method.invokeMethod<Map>('requestShizukuPermission');
       _shizuku = map?['shizuku']?.toString() ?? _shizuku;
+      final msg = map?['message']?.toString();
+      if (msg != null && msg.isNotEmpty) _status = msg;
     } catch (e) {
       _lastError = '请求 Shizuku 授权失败: $e';
     }
     notifyListeners();
+  }
+
+  Future<void> openShizukuApp() async {
+    try {
+      await _method.invokeMethod<void>('openShizukuApp');
+    } catch (e) {
+      _lastError = '无法打开 Shizuku: $e';
+      notifyListeners();
+    }
+  }
+
+  Future<void> openDeveloperOptions() async {
+    try {
+      await _method.invokeMethod<void>('openDeveloperOptions');
+    } catch (e) {
+      _lastError = '无法打开开发者选项: $e';
+      notifyListeners();
+    }
   }
 
   Future<void> setEnabled(bool value) async {

@@ -96,8 +96,15 @@ object MicBridgeHost {
                     mapOf(
                         "ok" to ok,
                         "shizuku" to VirtualMicController.shizukuState(),
+                        "message" to VirtualMicController.statusMessage,
                     ),
                 )
+            }
+            "openShizukuApp" -> {
+                result.success(VirtualMicController.openShizukuApp())
+            }
+            "openDeveloperOptions" -> {
+                result.success(VirtualMicController.openDeveloperOptions())
             }
             "pushPcm" -> {
                 val bytes = call.arguments as? ByteArray

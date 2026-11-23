@@ -71,10 +71,28 @@ class _MicBridgeScreenState extends State<MicBridgeScreen> {
         );
         return;
       }
+      await bridge.refreshStatus();
+      if (bridge.shizuku != 'Shizuku 已就绪') {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              '还不能开启虚拟麦：${bridge.shizuku}\n'
+              '请先完成 Shizuku「配对 → 启动 → 授权」',
+            ),
+            duration: const Duration(seconds: 4),
+          ),
+        );
+        // Still attempt so native side updates status text.
+      }
       await bridge.setEnabled(true);
       await BackgroundSyncService.start();
       if (!c.recording) await c.startRecord();
       await bridge.refreshStatus();
+      if (!bridge.virtualMicRunning && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(bridge.status)),
+        );
+      }
     } else {
       await bridge.setEnabled(false);
     }
@@ -163,12 +181,12 @@ class _MicBridgeScreenState extends State<MicBridgeScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Text(
-                    '① 准备 Shizuku（一次性）',
+                    '① 准备 Shizuku（配对 → 启动 → 授权）',
                     style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    'Android 不允许普通 App 注册系统麦克风。豆麦通过 Shizuku（无线调试，无需 Root）以 shell 权限注册 AudioPolicy，把录音豆 PCM 注入成系统麦。',
+                    '「配对」和「启动」是两步，只配对不算运行。豆麦必须等 Shizuku 顶部显示「正在运行」后才能开虚拟麦。',
                     style: TextStyle(
                       color: AppColors.textSecondary,
                       height: 1.45,
@@ -177,9 +195,22 @@ class _MicBridgeScreenState extends State<MicBridgeScreen> {
                   ),
                   const SizedBox(height: 10),
                   Text(
-                    '1. 安装并打开 Shizuku\n'
-                    '2. 用「无线调试」启动（Android 11+，每次重启后需重新启动）\n'
-                    '3. 回到本页授权',
+                    'A. 系统准备\n'
+                    '  · 设置 → 关于手机 → 连续点版本号 7 次，打开开发者选项\n'
+                    '  · 打开「USB 调试」和「无线调试」\n'
+                    '  · 小米/红米还需打开「USB 调试（安全设置）」\n'
+                    '\n'
+                    'B. 配对（通常只需一次）\n'
+                    '  1. 打开 Shizuku → 通过无线调试 → 点「配对」\n'
+                    '  2. 允许通知权限（配对码要在通知里输入）\n'
+                    '  3. 回到系统「无线调试」→「使用配对码配对设备」\n'
+                    '  4. 把 6 位配对码填进 Shizuku 通知，看到「配对成功」\n'
+                    '\n'
+                    'C. 启动（每次重启手机后都要再做）\n'
+                    '  · 在 Shizuku 里点「启动」，等到显示「Shizuku 正在运行」\n'
+                    '\n'
+                    'D. 回到豆麦\n'
+                    '  · 点「授权 Shizuku」，再开下方虚拟麦克风开关',
                     style: TextStyle(
                       color: AppColors.textSecondary,
                       height: 1.5,
@@ -210,20 +241,25 @@ class _MicBridgeScreenState extends State<MicBridgeScreen> {
                     ],
                   ),
                   const SizedBox(height: 12),
-                  Row(
+                  Wrap(
+                    spacing: 10,
+                    runSpacing: 10,
                     children: [
-                      Expanded(
-                        child: FilledButton.tonal(
-                          onPressed: bridge.requestShizukuPermission,
-                          child: const Text('授权 Shizuku'),
-                        ),
+                      FilledButton.tonal(
+                        onPressed: bridge.openShizukuApp,
+                        child: const Text('打开 Shizuku'),
                       ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: OutlinedButton(
-                          onPressed: bridge.refreshStatus,
-                          child: const Text('刷新状态'),
-                        ),
+                      OutlinedButton(
+                        onPressed: bridge.openDeveloperOptions,
+                        child: const Text('开发者选项'),
+                      ),
+                      FilledButton(
+                        onPressed: bridge.requestShizukuPermission,
+                        child: const Text('授权豆麦'),
+                      ),
+                      OutlinedButton(
+                        onPressed: bridge.refreshStatus,
+                        child: const Text('刷新状态'),
                       ),
                     ],
                   ),
