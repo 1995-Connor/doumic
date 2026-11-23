@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:math' as math;
+import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -170,6 +172,60 @@ class MicBridge extends ChangeNotifier {
         }
       }),
     );
+  }
+
+  bool _toneBusy = false;
+  bool get testToneBusy => _toneBusy;
+
+  /// Inject a short beep into the **same** virtual-mic path apps capture.
+  ///
+  /// Open Typeless (or any IME) voice mode, keep the phone mic covered / silent,
+  /// then tap this: if their level bars jump without you speaking, they are
+  /// reading DouMic — not the built-in mic. System Bluetooth will still show
+  /// nothing: this is AudioPolicy injection, not classic BT HFP.
+  Future<void> injectTestTone({
+    Duration duration = const Duration(milliseconds: 900),
+  }) async {
+    if (_toneBusy) return;
+    if (!_enabled || !_virtualMicRunning) {
+      _lastError = '请先打开系统虚拟麦克风，再测注入';
+      notifyListeners();
+      return;
+    }
+    _toneBusy = true;
+    _lastError = null;
+    notifyListeners();
+    try {
+      const rate = 16000;
+      const hz = 880.0;
+      const amp = 22000;
+      final total = (rate * duration.inMilliseconds / 1000).round();
+      // 20 ms frames — matches D3200 / AudioTrack pacing.
+      const frameSamples = 320;
+      var i = 0;
+      while (i < total) {
+        final n = math.min(frameSamples, total - i);
+        final frame = Uint8List(n * 2);
+        final bd = ByteData.sublistView(frame);
+        for (var s = 0; s < n; s++) {
+          final v =
+              (math.sin(2 * math.pi * hz * (i + s) / rate) * amp).round();
+          bd.setInt16(s * 2, v, Endian.little);
+        }
+        // Bypass AGC so the beep is a clear, loud spike for IME meters.
+        _updateLevel(frame);
+        _pcmBytesForwarded += frame.length;
+        await _method.invokeMethod<void>('pushPcm', frame);
+        i += n;
+        await Future<void>.delayed(const Duration(milliseconds: 18));
+      }
+      _status = '已注入测试音 · 看 Typeless 波形是否跳动';
+    } catch (e) {
+      _lastError = '测试音注入失败: $e';
+    } finally {
+      _toneBusy = false;
+      notifyListeners();
+    }
   }
 
   void beginDictation(String currentTranscript) {

@@ -428,6 +428,26 @@ class _MicBridgeScreenState extends State<MicBridgeScreen> {
                       ],
                     ),
                   ],
+                  const SizedBox(height: 12),
+                  FilledButton.tonal(
+                    onPressed: (!micOk || bridge.testToneBusy)
+                        ? null
+                        : () async {
+                            await bridge.injectTestTone();
+                            if (!mounted) return;
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text(
+                                  '已注入约 1 秒测试音。看 Typeless 波形：跳动=走豆麦；完全不动=仍是手机麦',
+                                ),
+                                duration: Duration(seconds: 5),
+                              ),
+                            );
+                          },
+                    child: Text(
+                      bridge.testToneBusy ? '正在注入测试音…' : '注入测试音（验证是否走豆麦）',
+                    ),
+                  ),
                   if (bridge.lastError != null) ...[
                     const SizedBox(height: 8),
                     Text(
@@ -447,12 +467,17 @@ class _MicBridgeScreenState extends State<MicBridgeScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Text(
-                    '③ 在别的 App 里用',
+                    '③ 怎么确认走的是豆麦？',
                     style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    '保持豆麦在后台。然后直接用原来的搜狗/系统语音键，或在腾讯会议、Zoom 里正常开麦——不用切换输入法，也不用进录音管理。',
+                    '系统蓝牙里看不到这支麦是正常的：录音豆不是经典蓝牙通话麦，而是豆麦用 Shizuku 把声音「冒充」成手机内置麦克风。\n\n'
+                    '验证步骤：\n'
+                    '1. 豆麦虚拟麦已开，Typeless 进入语音输入（看到波形条）\n'
+                    '2. 用手捂住手机底部麦克风，自己先别说话\n'
+                    '3. 回到豆麦点「注入测试音」——Typeless 波形跳一下 = 走豆麦\n'
+                    '4. 或：手机放远/捂麦，只对录音豆小声说话；关掉豆麦开关后再试，对比波形有无',
                     style: TextStyle(
                       color: AppColors.textSecondary,
                       height: 1.5,
@@ -476,6 +501,7 @@ class _MicBridgeScreenState extends State<MicBridgeScreen> {
                     '· 这是独立麦克风 App，不是 Soundcore Manager / 录音管理器\n'
                     '· 需要 Android 13+ 与 Shizuku\n'
                     '· 请先退出飞书等占用录音豆的 App\n'
+                    '· 蓝牙设置不显示连接 ≠ 没在用；看「虚拟麦已开启」+ 测试音/捂麦对比\n'
                     '· 设备指示灯亮起只表示正在向手机推流，本 App 不保存录音文件',
                     style: TextStyle(
                       color: AppColors.textSecondary,
