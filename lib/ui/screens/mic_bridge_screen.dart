@@ -428,6 +428,33 @@ class _MicBridgeScreenState extends State<MicBridgeScreen> {
                       ],
                     ),
                   ],
+                  if (bridge.enabled) ...[
+                    const SizedBox(height: 10),
+                    Text(
+                      bridge.appsCapturingVirtualMic
+                          ? '✓ 系统报告：已有 App 正在从「虚拟麦注入通路」采麦'
+                          : '⚠ 系统报告：还没有 App 走注入通路（Typeless 若在收音，多半仍在用手机麦）',
+                      style: TextStyle(
+                        color: bridge.appsCapturingVirtualMic
+                            ? AppColors.mint
+                            : AppColors.amber,
+                        fontSize: 12,
+                        height: 1.4,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    if (bridge.injectDebug.isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        bridge.injectDebug,
+                        style: TextStyle(
+                          color: AppColors.textMuted,
+                          fontSize: 11,
+                          height: 1.35,
+                        ),
+                      ),
+                    ],
+                  ],
                   const SizedBox(height: 12),
                   FilledButton.tonal(
                     onPressed: (!micOk || bridge.testToneBusy)
@@ -438,14 +465,14 @@ class _MicBridgeScreenState extends State<MicBridgeScreen> {
                             ScaffoldMessenger.of(context).showSnackBar(
                               const SnackBar(
                                 content: Text(
-                                  '已注入约 1 秒测试音。看 Typeless 波形：跳动=走豆麦；完全不动=仍是手机麦',
+                                  '已往注入通路塞了约 1 秒蜂鸣。你不用说话——若 Typeless 波形跳，说明通路通了',
                                 ),
                                 duration: Duration(seconds: 5),
                               ),
                             );
                           },
                     child: Text(
-                      bridge.testToneBusy ? '正在注入测试音…' : '注入测试音（验证是否走豆麦）',
+                      bridge.testToneBusy ? '正在注入测试音…' : '注入测试音（旁路自检，不是说话）',
                     ),
                   ),
                   if (bridge.lastError != null) ...[
@@ -472,12 +499,9 @@ class _MicBridgeScreenState extends State<MicBridgeScreen> {
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    '系统蓝牙里看不到这支麦是正常的：录音豆不是经典蓝牙通话麦，而是豆麦用 Shizuku 把声音「冒充」成手机内置麦克风。\n\n'
-                    '验证步骤：\n'
-                    '1. 豆麦虚拟麦已开，Typeless 进入语音输入（看到波形条）\n'
-                    '2. 用手捂住手机底部麦克风，自己先别说话\n'
-                    '3. 回到豆麦点「注入测试音」——Typeless 波形跳一下 = 走豆麦\n'
-                    '4. 或：手机放远/捂麦，只对录音豆小声说话；关掉豆麦开关后再试，对比波形有无',
+                    '你的判断是对的：对着录音豆说话时，Typeless 波形就该跳。豆麦界面上的电平只说明「豆→App」有声音，不保证「App→Typeless」已接上。\n\n'
+                    '系统蓝牙里看不到这支麦是正常的——它不是经典蓝牙通话麦，而是用 Shizuku 把 PCM 冒充成手机内置麦。\n\n'
+                    '看上方绿色提示「有 App 正在从注入通路采麦」+ 捂住手机麦只对豆说话：波形跳才算真正走通。',
                     style: TextStyle(
                       color: AppColors.textSecondary,
                       height: 1.5,
@@ -501,7 +525,7 @@ class _MicBridgeScreenState extends State<MicBridgeScreen> {
                     '· 这是独立麦克风 App，不是 Soundcore Manager / 录音管理器\n'
                     '· 需要 Android 13+ 与 Shizuku\n'
                     '· 请先退出飞书等占用录音豆的 App\n'
-                    '· 蓝牙设置不显示连接 ≠ 没在用；看「虚拟麦已开启」+ 测试音/捂麦对比\n'
+                    '· 蓝牙设置不显示连接是正常的\n'
                     '· 设备指示灯亮起只表示正在向手机推流，本 App 不保存录音文件',
                     style: TextStyle(
                       color: AppColors.textSecondary,

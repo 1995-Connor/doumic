@@ -53,7 +53,8 @@ object VirtualMicController {
             .daemon(false)
             .processNameSuffix("vmic")
             .debuggable(false)
-            .version(2)
+            // Bump when AIDL changes so Shizuku restarts the UserService.
+            .version(3)
     }
 
     private val connection = object : ServiceConnection {
@@ -194,6 +195,22 @@ object VirtualMicController {
     }
 
     fun isRunning(): Boolean = running.get()
+
+    fun liveStatus(): String {
+        return try {
+            serviceRef.get()?.status()?.takeIf { it.isNotBlank() } ?: statusMessage
+        } catch (_: Exception) {
+            statusMessage
+        }
+    }
+
+    fun debugStatus(): String {
+        return try {
+            serviceRef.get()?.debugStatus() ?: statusMessage
+        } catch (e: Exception) {
+            "debug unavailable: ${e.message}"
+        }
+    }
 
     fun writePcm16k(pcm: ByteArray) {
         if (!enabled.get() || !running.get()) return

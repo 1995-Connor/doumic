@@ -17,4 +17,7 @@ interface IVirtualMicUserService {
     boolean isRunning();
 
     String status();
+
+    /** JSON-ish debug line: clientsOnVirtualMic, bytesInjected, writeErrors. */
+    String debugStatus();
 }

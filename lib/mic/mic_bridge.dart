@@ -28,11 +28,13 @@ class MicBridge extends ChangeNotifier {
   double _level = 0;
   String _status = '未启用';
   String _shizuku = '未知';
+  String _injectDebug = '';
   String? _partialText;
   String? _lastError;
   String _dictationBaseline = '';
   StreamSubscription? _eventSub;
   int _pcmBytesForwarded = 0;
+  Timer? _statusPoll;
   final PcmGain _gain = PcmGain();
 
   bool get enabled => _enabled;
@@ -42,10 +44,17 @@ class MicBridge extends ChangeNotifier {
   double get level => _level;
   String get status => _status;
   String get shizuku => _shizuku;
+  /// Native injector health: whether any app is capturing via REMOTE_SUBMIX.
+  String get injectDebug => _injectDebug;
   String? get partialText => _partialText;
   String? get lastError => _lastError;
   int get pcmBytesForwarded => _pcmBytesForwarded;
   String get dictationBaseline => _dictationBaseline;
+
+  /// True when at least one app is reading the AudioPolicy injector.
+  bool get appsCapturingVirtualMic =>
+      _injectDebug.contains('clients=') &&
+      !RegExp(r'clients=0\b').hasMatch(_injectDebug);
 
   /// Soft AGC on by default — phone mics get HAL AGC; the bean does not.
   bool get autoGain => _gain.auto;
@@ -96,9 +105,19 @@ class MicBridge extends ChangeNotifier {
         _virtualMicRunning = map['running'] == true;
         _shizuku = map['shizuku']?.toString() ?? _shizuku;
         _enabled = map['enabled'] == true || _enabled;
+        final dbg = map['debug']?.toString();
+        if (dbg != null && dbg.isNotEmpty) _injectDebug = dbg;
       }
     } catch (_) {}
     notifyListeners();
+  }
+
+  void _ensureStatusPoll() {
+    _statusPoll?.cancel();
+    if (!_enabled) return;
+    _statusPoll = Timer.periodic(const Duration(seconds: 1), (_) {
+      unawaited(refreshStatus());
+    });
   }
 
   Future<void> requestShizukuPermission() async {
@@ -138,6 +157,10 @@ class MicBridge extends ChangeNotifier {
     if (value) {
       _gain.reset();
       _pcmBytesForwarded = 0;
+      _injectDebug = '';
+    } else {
+      _statusPoll?.cancel();
+      _statusPoll = null;
     }
     _status = value ? '正在启动系统虚拟麦克风…' : '未启用';
     notifyListeners();
@@ -150,6 +173,8 @@ class MicBridge extends ChangeNotifier {
         _virtualMicRunning = map['running'] == true;
         _shizuku = map['shizuku']?.toString() ?? _shizuku;
       }
+      await refreshStatus();
+      _ensureStatusPoll();
     } catch (e) {
       _lastError = '无法启动虚拟麦克风: $e';
       debugPrint('[MicBridge] setEnabled failed: $e');
@@ -334,6 +359,8 @@ class MicBridge extends ChangeNotifier {
 
   @override
   void dispose() {
+    _statusPoll?.cancel();
+    _statusPoll = null;
     _eventSub?.cancel();
     _eventSub = null;
     super.dispose();

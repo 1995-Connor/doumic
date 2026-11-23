@@ -47,6 +47,13 @@ class VirtualMicUserService @Keep constructor(
 
     override fun status(): String = engine?.lastStatus ?: "idle"
 
+    override fun debugStatus(): String {
+        val e = engine ?: return "idle"
+        val snap = e.debugSnapshot()
+        return "clients=${snap["clientsOnVirtualMic"]} injected=${snap["bytesInjected"]} " +
+            "err=${snap["writeErrors"]} ring=${snap["ringFilled"]} | ${snap["message"]}"
+    }
+
     fun destroy() {
         stop()
         Log.i(TAG, "UserService destroyed")

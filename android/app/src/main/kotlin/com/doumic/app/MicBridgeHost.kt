@@ -83,10 +83,11 @@ object MicBridgeHost {
             "getVirtualMicStatus" -> {
                 result.success(
                     mapOf(
-                        "message" to VirtualMicController.statusMessage,
+                        "message" to VirtualMicController.liveStatus(),
                         "running" to VirtualMicController.isRunning(),
                         "shizuku" to VirtualMicController.shizukuState(),
                         "enabled" to enabled.get(),
+                        "debug" to VirtualMicController.debugStatus(),
                     ),
                 )
             }
