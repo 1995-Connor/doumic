@@ -107,6 +107,16 @@ object MicBridgeHost {
             "openDeveloperOptions" -> {
                 result.success(VirtualMicController.openDeveloperOptions())
             }
+            "selfTestLoopback" -> {
+                val msg = VirtualMicController.selfTestLoopback()
+                result.success(
+                    mapOf(
+                        "message" to msg,
+                        "running" to VirtualMicController.isRunning(),
+                        "debug" to VirtualMicController.debugStatus(),
+                    ),
+                )
+            }
             "pushPcm" -> {
                 val bytes = call.arguments as? ByteArray
                 if (bytes != null) pushPcm(bytes)

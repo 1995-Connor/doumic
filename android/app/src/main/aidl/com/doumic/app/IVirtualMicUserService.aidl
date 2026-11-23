@@ -20,4 +20,7 @@ interface IVirtualMicUserService {
 
     /** JSON-ish debug line: clientsOnVirtualMic, bytesInjected, writeErrors. */
     String debugStatus();
+
+    /** Inject beep + AudioRecord self-test. Returns pass/fail message. */
+    String selfTestLoopback();
 }

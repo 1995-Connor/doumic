@@ -6,6 +6,7 @@ import android.media.AudioAttributes
 import android.media.AudioDeviceInfo
 import android.media.AudioFormat
 import android.media.AudioManager
+import android.media.AudioRecord
 import android.media.AudioRecordingConfiguration
 import android.media.AudioTrack
 import android.media.MediaRecorder
@@ -13,29 +14,41 @@ import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.Looper
+import android.os.Process
 import android.util.Log
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
+import kotlin.math.abs
+import kotlin.math.sin
 
 /**
  * System-wide virtual microphone via AudioPolicy LOOP_BACK injector.
  *
- * Critical details (AOSP / LineageOS MicInjector / VirtuMic):
- * - Mix must be MIX_ROLE_INJECTOR + ROUTE_FLAG_LOOP_BACK
- * - [setPersistent(true)] keeps the remote-submix attached even between writes;
- *   without it, capturing apps often keep reading the **hardware** mic
- * - AudioTrack must be fed continuously; underruns make IME meters stay flat
- *   even while DouMic's own level UI (pre-inject) still moves
+ * Critical details (AOSP / LineageOS MicInjector / VirtuMic / ShizuCallRecorder):
+ * - Policy Context MUST attribute as com.android.shell (see [ShellFakeContext])
+ * - Mix must be MIX_ROLE_INJECTOR + ROUTE_FLAG_LOOP_BACK + setPersistent(true)
+ * - AudioTrack must be fed continuously (silence filler) or IMEs keep hardware mic
  *
  * Must run as shell/root (Shizuku UserService) on Android 13+.
  */
-@SuppressLint("PrivateApi")
+@SuppressLint("PrivateApi", "MissingPermission")
 class VirtualMicEngine(context: Context) : AutoCloseable {
-    private val appContext = context.applicationContext
+    // Prefer shell-attributed context; fall back to whatever Shizuku handed us.
+    private val shellContext: Context = runCatching { ShellFakeContext.get() }
+        .onFailure { Log.e(TAG, "ShellFakeContext failed, using host context", it) }
+        .getOrDefault(context.applicationContext)
     private val audioManager =
-        appContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        shellContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+
+    init {
+        Log.i(
+            TAG,
+            "engine ctx pkg=${shellContext.packageName} uid=${Process.myUid()} " +
+                "pid=${Process.myPid()}",
+        )
+    }
 
     private var policy: Any? = null
     private var track: AudioTrack? = null
@@ -71,8 +84,93 @@ class VirtualMicEngine(context: Context) : AutoCloseable {
         "writeErrors" to writeErrors.get(),
         "ringFilled" to ringFilled,
         "clientsOnVirtualMic" to clientsOnVirtualMic,
+        "shellPkg" to shellContext.packageName,
+        "uid" to Process.myUid(),
         "message" to lastStatus,
+        "lastSelfTest" to (lastSelfTest ?: ""),
     )
+
+    @Volatile
+    private var lastSelfTest: String? = null
+
+    /**
+     * Inject a loud beep and immediately AudioRecord(VOICE_RECOGNITION) in-process.
+     * If peak is high, the AudioPolicy mix is actually replacing MIC capture on this ROM.
+     */
+    fun selfTestLoopback(): String {
+        if (!running.get()) {
+            lastSelfTest = "先开启虚拟麦再自检"
+            return lastSelfTest!!
+        }
+        val format = AudioFormat.Builder()
+            .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+            .setSampleRate(OUT_RATE)
+            .setChannelMask(AudioFormat.CHANNEL_IN_MONO)
+            .build()
+        val minBuf = AudioRecord.getMinBufferSize(
+            OUT_RATE,
+            AudioFormat.CHANNEL_IN_MONO,
+            AudioFormat.ENCODING_PCM_16BIT,
+        ).coerceAtLeast(FRAME_BYTES * 4)
+        val record = try {
+            AudioRecord.Builder()
+                .setAudioSource(MediaRecorder.AudioSource.VOICE_RECOGNITION)
+                .setAudioFormat(format)
+                .setBufferSizeInBytes(minBuf)
+                .build()
+        } catch (e: Exception) {
+            lastSelfTest = "自检 AudioRecord 失败: ${e.message}"
+            return lastSelfTest!!
+        }
+        if (record.state != AudioRecord.STATE_INITIALIZED) {
+            record.release()
+            lastSelfTest = "自检 AudioRecord 未初始化"
+            return lastSelfTest!!
+        }
+
+        // Feed ~600 ms of 880 Hz @ 16 kHz into the inject ring (writer upsamples).
+        val tone16k = ByteArray(16000 * 2 * 6 / 10) // 600 ms
+        val bd = java.nio.ByteBuffer.wrap(tone16k).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        var i = 0
+        while (bd.remaining() >= 2) {
+            val s = (sin(2.0 * Math.PI * 880.0 * i / 16000.0) * 28000).toInt()
+            bd.putShort(s.toShort())
+            i++
+        }
+        writePcm16k(tone16k)
+
+        val buf = ShortArray(minBuf / 2)
+        var peak = 0
+        try {
+            record.startRecording()
+            val deadline = System.nanoTime() + 700_000_000L
+            while (System.nanoTime() < deadline) {
+                val n = record.read(buf, 0, buf.size)
+                if (n > 0) {
+                    for (k in 0 until n) {
+                        val v = abs(buf[k].toInt())
+                        if (v > peak) peak = v
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            lastSelfTest = "自检录音失败: ${e.message}"
+            return lastSelfTest!!
+        } finally {
+            runCatching { record.stop() }
+            runCatching { record.release() }
+        }
+
+        val ok = peak >= 2000
+        lastSelfTest = if (ok) {
+            "自检通过 peak=$peak · 系统麦已被注入替换"
+        } else {
+            "自检失败 peak=$peak · 本机 ROM 仍在读硬件麦，Typeless 也会听不到豆"
+        }
+        lastStatus = lastSelfTest!!
+        Log.i(TAG, lastSelfTest!!)
+        return lastSelfTest!!
+    }
 
     @Synchronized
     fun start(): String {
@@ -145,7 +243,7 @@ class VirtualMicEngine(context: Context) : AutoCloseable {
         val injectionMix = audioMixBuilderClass.getMethod("build").invoke(mixBuilder)
 
         val policyBuilder =
-            audioPolicyBuilderClass.getConstructor(Context::class.java).newInstance(appContext)
+            audioPolicyBuilderClass.getConstructor(Context::class.java).newInstance(shellContext)
         runCatching {
             audioPolicyBuilderClass
                 .getMethod("setLooper", Looper::class.java)

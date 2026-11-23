@@ -10,17 +10,17 @@ class PcmGain {
   /// When true, gain tracks recent peak toward [targetPeak].
   bool auto = true;
 
-  /// Used when [auto] is false. Typical useful range: 2–12×.
-  double manualGain = 6.0;
+  /// Used when [auto] is false. Typical useful range: 4–16×.
+  double manualGain = 8.0;
 
-  /// Target peak as fraction of full-scale (0–1). ~0.4 ≈ −8 dBFS.
-  double targetPeak = 0.40;
+  /// Target peak as fraction of full-scale (0–1). Soft speech needs headroom.
+  double targetPeak = 0.55;
 
   /// Never apply less than this (bean is quieter than phone mics).
-  double minGain = 2.0;
+  double minGain = 4.0;
 
   /// Hard ceiling to avoid runaway on silence noise.
-  double maxGain = 14.0;
+  double maxGain = 18.0;
 
   /// Current applied gain (for UI).
   double appliedGain = 2.0;

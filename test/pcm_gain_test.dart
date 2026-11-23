@@ -33,7 +33,7 @@ void main() {
       out = g.process(quiet);
     }
     expect(_peak(out), greaterThan(4000));
-    expect(g.appliedGain, greaterThan(2.0));
+    expect(g.appliedGain, greaterThan(3.0));
   });
 
   test('manual gain scales and soft-clips loud peaks', () {

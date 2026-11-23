@@ -51,7 +51,18 @@ class VirtualMicUserService @Keep constructor(
         val e = engine ?: return "idle"
         val snap = e.debugSnapshot()
         return "clients=${snap["clientsOnVirtualMic"]} injected=${snap["bytesInjected"]} " +
-            "err=${snap["writeErrors"]} ring=${snap["ringFilled"]} | ${snap["message"]}"
+            "err=${snap["writeErrors"]} ring=${snap["ringFilled"]} " +
+            "shell=${snap["shellPkg"]} uid=${snap["uid"]} | ${snap["message"]}"
+    }
+
+    override fun selfTestLoopback(): String {
+        val e = engine ?: return "请先开启虚拟麦克风"
+        return try {
+            e.selfTestLoopback()
+        } catch (ex: Exception) {
+            Log.e(TAG, "selfTest failed", ex)
+            "自检异常: ${ex.message}"
+        }
     }
 
     fun destroy() {

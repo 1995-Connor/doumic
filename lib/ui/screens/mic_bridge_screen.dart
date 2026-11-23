@@ -456,24 +456,45 @@ class _MicBridgeScreenState extends State<MicBridgeScreen> {
                     ],
                   ],
                   const SizedBox(height: 12),
-                  FilledButton.tonal(
-                    onPressed: (!micOk || bridge.testToneBusy)
-                        ? null
-                        : () async {
-                            await bridge.injectTestTone();
-                            if (!mounted) return;
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text(
-                                  '已往注入通路塞了约 1 秒蜂鸣。你不用说话——若 Typeless 波形跳，说明通路通了',
-                                ),
-                                duration: Duration(seconds: 5),
-                              ),
-                            );
-                          },
-                    child: Text(
-                      bridge.testToneBusy ? '正在注入测试音…' : '注入测试音（旁路自检，不是说话）',
-                    ),
+                  Wrap(
+                    spacing: 10,
+                    runSpacing: 10,
+                    children: [
+                      FilledButton(
+                        onPressed: !micOk
+                            ? null
+                            : () async {
+                                final msg = await bridge.selfTestLoopback();
+                                if (!mounted) return;
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text(msg),
+                                    duration: const Duration(seconds: 6),
+                                  ),
+                                );
+                              },
+                        child: const Text('本机回采自检'),
+                      ),
+                      FilledButton.tonal(
+                        onPressed: (!micOk || bridge.testToneBusy)
+                            ? null
+                            : () async {
+                                await bridge.injectTestTone();
+                                if (!mounted) return;
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text(
+                                      '已注入蜂鸣。捂住手机麦看 Typeless：跳动=通路通',
+                                    ),
+                                    duration: Duration(seconds: 5),
+                                  ),
+                                );
+                              },
+                        child: Text(
+                          bridge.testToneBusy ? '正在注入…' : '注入测试音',
+                        ),
+                      ),
+                    ],
                   ),
                   if (bridge.lastError != null) ...[
                     const SizedBox(height: 8),

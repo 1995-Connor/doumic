@@ -54,7 +54,7 @@ object VirtualMicController {
             .processNameSuffix("vmic")
             .debuggable(false)
             // Bump when AIDL changes so Shizuku restarts the UserService.
-            .version(3)
+            .version(4)
     }
 
     private val connection = object : ServiceConnection {
@@ -209,6 +209,25 @@ object VirtualMicController {
             serviceRef.get()?.debugStatus() ?: statusMessage
         } catch (e: Exception) {
             "debug unavailable: ${e.message}"
+        }
+    }
+
+    fun selfTestLoopback(): String {
+        return try {
+            val svc = serviceRef.get()
+            if (svc == null) {
+                statusMessage = "自检失败：虚拟麦服务未连接"
+                return statusMessage
+            }
+            val msg = svc.selfTestLoopback()
+            statusMessage = msg
+            notifyFlutter()
+            msg
+        } catch (e: Exception) {
+            val msg = "自检失败: ${e.message}"
+            statusMessage = msg
+            notifyFlutter()
+            msg
         }
     }
 

@@ -208,6 +208,24 @@ class MicBridge extends ChangeNotifier {
   /// then tap this: if their level bars jump without you speaking, they are
   /// reading DouMic — not the built-in mic. System Bluetooth will still show
   /// nothing: this is AudioPolicy injection, not classic BT HFP.
+  Future<String> selfTestLoopback() async {
+    await ensureInitialized();
+    try {
+      final map = await _method.invokeMethod<Map>('selfTestLoopback');
+      final msg = map?['message']?.toString() ?? '自检无返回';
+      _status = msg;
+      final dbg = map?['debug']?.toString();
+      if (dbg != null && dbg.isNotEmpty) _injectDebug = dbg;
+      _lastError = msg.contains('失败') ? msg : null;
+      notifyListeners();
+      return msg;
+    } catch (e) {
+      _lastError = '自检调用失败: $e';
+      notifyListeners();
+      return _lastError!;
+    }
+  }
+
   Future<void> injectTestTone({
     Duration duration = const Duration(milliseconds: 900),
   }) async {
