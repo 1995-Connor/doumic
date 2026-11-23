@@ -8,7 +8,7 @@ import 'package:flutter/services.dart';
 /// background mode and state restoration instead.
 class BackgroundSyncService {
   static const _channel = MethodChannel(
-    'com.anker.anker_recorder/background_sync',
+    'com.doumic.app/background_sync',
   );
 
   static bool _running = false;

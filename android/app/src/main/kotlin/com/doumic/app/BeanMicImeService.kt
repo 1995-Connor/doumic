@@ -1,4 +1,4 @@
-package com.anker.anker_recorder
+package com.doumic.app
 
 import android.inputmethodservice.InputMethodService
 import android.view.Gravity

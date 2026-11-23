@@ -1,4 +1,4 @@
-package com.anker.anker_recorder
+package com.doumic.app
 
 import android.content.ComponentName
 import android.content.Context
@@ -32,7 +32,7 @@ object VirtualMicController {
     private val userServiceArgs by lazy {
         Shizuku.UserServiceArgs(
             ComponentName(
-                "com.anker.anker_recorder",
+                "com.doumic.app",
                 VirtualMicUserService::class.java.name,
             ),
         )

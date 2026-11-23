@@ -4,8 +4,17 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+import java.util.Properties
+import java.io.FileInputStream
+
+val keystorePropertiesFile = rootProject.file("key.properties")
+val keystoreProperties = Properties()
+if (keystorePropertiesFile.exists()) {
+    keystoreProperties.load(FileInputStream(keystorePropertiesFile))
+}
+
 android {
-    namespace = "com.anker.anker_recorder"
+    namespace = "com.doumic.app"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -19,16 +28,39 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.anker.anker_recorder"
+        // Independent from Soundcore Manager (com.anker.anker_recorder)
+        applicationId = "com.doumic.app"
         minSdk = maxOf(flutter.minSdkVersion, 26)
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
     }
 
+    signingConfigs {
+        create("doumic") {
+            val storeFilePath = keystoreProperties["storeFile"] as String?
+            if (storeFilePath != null) {
+                storeFile = file(storeFilePath)
+                storePassword = keystoreProperties["storePassword"] as String
+                keyAlias = keystoreProperties["keyAlias"] as String
+                keyPassword = keystoreProperties["keyPassword"] as String
+            } else {
+                // Fallback dedicated keystore checked into android/keystore/
+                storeFile = file("../keystore/doumic-release.jks")
+                storePassword = "doumic-store-pass"
+                keyAlias = "doumic"
+                keyPassword = "doumic-store-pass"
+            }
+        }
+    }
+
     buildTypes {
+        debug {
+            applicationIdSuffix = ""
+            signingConfig = signingConfigs.getByName("doumic")
+        }
         release {
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("doumic")
         }
     }
 }

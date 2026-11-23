@@ -19,6 +19,10 @@ Android 也不允许普通 App 注册虚拟麦。豆麦用 **Shizuku（无线调
 | 权限 | **Shizuku**（每次重启后需重新启动） |
 | 设备 | 需兼容动态 AudioPolicy（多数 AOSP/接近 AOSP 的 ROM） |
 
+## 与 Soundcore Manager 共存
+
+本应用使用独立包名 **`com.doumic.app`** 与独立签名证书，可与官方/社区 Soundcore Manager（`com.anker.anker_recorder`）同时安装。
+
 ## 安装 APK
 
 预编译：[`releases/doumai-release.apk`](releases/doumai-release.apk)

@@ -12,3 +12,8 @@ GeneratedPluginRegistrant.java
 key.properties
 **/*.keystore
 **/*.jks
+
+# DouMic ships a dedicated community keystore so it can coexist with Soundcore Manager.
+!keystore/
+!keystore/doumic-release.jks
+!key.properties

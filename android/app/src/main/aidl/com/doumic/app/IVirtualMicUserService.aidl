@@ -1,4 +1,4 @@
-package com.anker.anker_recorder;
+package com.doumic.app;
 
 /**
  * Shizuku UserService running as shell — registers a system AudioPolicy

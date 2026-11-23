@@ -1,4 +1,4 @@
-package com.anker.anker_recorder
+package com.doumic.app
 
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -13,7 +13,7 @@ class MainActivity : FlutterActivity() {
 
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
-            "com.anker.anker_recorder/background_sync",
+            "com.doumic.app/background_sync",
         ).setMethodCallHandler { call, result ->
             try {
                 when (call.method) {

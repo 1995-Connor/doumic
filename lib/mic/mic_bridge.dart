@@ -12,9 +12,9 @@ class MicBridge extends ChangeNotifier {
   MicBridge._();
   static final MicBridge instance = MicBridge._();
 
-  static const _method = MethodChannel('com.anker.anker_recorder/mic_bridge');
+  static const _method = MethodChannel('com.doumic.app/mic_bridge');
   static const _events = EventChannel(
-    'com.anker.anker_recorder/mic_bridge_events',
+    'com.doumic.app/mic_bridge_events',
   );
 
   bool _enabled = false;

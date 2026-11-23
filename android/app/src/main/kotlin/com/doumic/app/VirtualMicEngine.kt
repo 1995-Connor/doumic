@@ -1,4 +1,4 @@
-package com.anker.anker_recorder
+package com.doumic.app
 
 import android.annotation.SuppressLint
 import android.content.Context

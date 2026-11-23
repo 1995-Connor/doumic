@@ -1,4 +1,4 @@
-package com.anker.anker_recorder
+package com.doumic.app
 
 import android.content.Context
 import android.content.Intent
@@ -16,8 +16,8 @@ import java.util.concurrent.atomic.AtomicReference
  * Shared host between Flutter, virtual-mic injection, and optional IME.
  */
 object MicBridgeHost {
-    const val METHOD_CHANNEL = "com.anker.anker_recorder/mic_bridge"
-    const val EVENT_CHANNEL = "com.anker.anker_recorder/mic_bridge_events"
+    const val METHOD_CHANNEL = "com.doumic.app/mic_bridge"
+    const val EVENT_CHANNEL = "com.doumic.app/mic_bridge_events"
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private val enabled = AtomicBoolean(false)
