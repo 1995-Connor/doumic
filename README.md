@@ -26,9 +26,8 @@
 
 **演示系统级虚拟麦（推荐）→ macOS**
 
-- 安装包：[`releases/doumai-macos.dmg`](releases/doumai-macos.dmg)（由 GitHub Actions 构建）
-- 需另装一次 [BlackHole 2ch](https://existential.audio/blackhole/)；Typeless 麦克风选 BlackHole
-- 详见 [`MACOS.md`](MACOS.md)
+- 安装包：[`releases/doumai-macos.dmg`](releases/doumai-macos.dmg)（含豆麦 + BlackHole 2ch，一键安装）
+- Typeless 麦克风选 **BlackHole 2ch**；详见 [`MACOS.md`](MACOS.md)
 
 **Android（受限）**
 
