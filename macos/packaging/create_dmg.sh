@@ -69,7 +69,9 @@ cat > "${STAGE}/使用说明.txt" <<EOF
 2. 把「豆麦.app」拷到「应用程序」
 
 装完后打开豆麦 → 连接录音豆 → 打开虚拟麦 →
-在 Typeless 里把麦克风选成「BlackHole 2ch」。
+点「注入测试音」，看「系统设置→声音→输入→BlackHole」电平是否跳动。
+Typeless 选 BlackHole；若没有该项：系统输入默认改成 BlackHole，
+Typeless 选「自动检测」并完全退出后重开。
 
 手动安装
 --------
@@ -80,7 +82,7 @@ cat > "${STAGE}/使用说明.txt" <<EOF
 注意
 ----
 - 系统「设置 → 声音 → 输出」不要选 BlackHole，否则喇叭没声
-- 只在 Typeless 等 App 的「输入/麦克风」里选 BlackHole
+- 「输入」可选 BlackHole（给 Typeless「自动检测」用）
 - BlackHole 许可见 BlackHole-LICENSE.txt（GPL-3.0）
 EOF
 

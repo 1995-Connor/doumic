@@ -460,11 +460,17 @@ class _MicBridgeScreenState extends State<MicBridgeScreen> {
                   if (bridge.enabled) ...[
                     const SizedBox(height: 10),
                     Text(
-                      bridge.appsCapturingVirtualMic
-                          ? '✓ 系统报告：已有 App 正在从「虚拟麦注入通路」采麦'
-                          : '⚠ 系统报告：还没有 App 走注入通路（Typeless 若在收音，多半仍在用手机麦）',
+                      _isMac
+                          ? (bridge.virtualMicRunning
+                              ? '✓ 正在向 BlackHole 灌音。请看「系统设置→声音→输入→BlackHole」电平是否跳动；Typeless 选「自动检测/系统默认」（系统输入须为 BlackHole）'
+                              : '⚠ 虚拟麦未在运行')
+                          : (bridge.appsCapturingVirtualMic
+                              ? '✓ 系统报告：已有 App 正在从「虚拟麦注入通路」采麦'
+                              : '⚠ 系统报告：还没有 App 走注入通路（Typeless 若在收音，多半仍在用手机麦）'),
                       style: TextStyle(
-                        color: bridge.appsCapturingVirtualMic
+                        color: (_isMac
+                                ? bridge.virtualMicRunning
+                                : bridge.appsCapturingVirtualMic)
                             ? AppColors.mint
                             : AppColors.amber,
                         fontSize: 12,
