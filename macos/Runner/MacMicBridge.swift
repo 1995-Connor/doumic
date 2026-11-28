@@ -1,14 +1,14 @@
 import AppKit
-import AVFoundation
+import AudioToolbox
 import CoreAudio
 import FlutterMacOS
 import Foundation
 
-/// Routes D3200 PCM16@16kHz into BlackHole (virtual mic loopback).
+/// Routes D3200 PCM16@16kHz into BlackHole via AUHAL (not AVAudioEngine).
 ///
-/// Uses AVAudioSourceNode + ring buffer (not scheduleBuffer bursts) so Core Audio
-/// continuously pulls samples into BlackHole's output → other apps hear them on
-/// BlackHole's input.
+/// BlackHole loopback: play on BlackHole **output** → other apps record BlackHole **input**.
+/// AVAudioEngine.setDeviceID often silently keeps the default speakers; AUHAL
+/// `kAudioOutputUnitProperty_CurrentDevice` is the reliable path.
 final class MacMicBridge: NSObject {
   static let shared = MacMicBridge()
 
@@ -18,8 +18,7 @@ final class MacMicBridge: NSObject {
   private var methodChannel: FlutterMethodChannel?
   private var eventSink: FlutterEventSink?
 
-  private var engine: AVAudioEngine?
-  private var sourceNode: AVAudioSourceNode?
+  private var audioUnit: AudioUnit?
   private var running = false
   private var enabled = false
   private var statusMessage = "未启用"
@@ -28,15 +27,20 @@ final class MacMicBridge: NSObject {
   private var bytesForwarded: Int64 = 0
   private var renderFrames: Int64 = 0
   private var underruns: Int64 = 0
+  private var lastAUError: OSStatus = noErr
 
   private let ringLock = NSLock()
-  // Interleaved stereo float32 @ device sample rate.
-  private var ring = [Float](repeating: 0, count: 48_000 * 2 * 2) // ~2s stereo @ 48k
+  private var ring = [Float](repeating: 0, count: 48_000 * 2 * 2)
   private var ringRead = 0
   private var ringWrite = 0
   private var ringFilled = 0
   private var deviceRate: Double = 48_000
-  private var deviceChannels: Int = 2
+  private var deviceChannels: UInt32 = 2
+
+  /// Remaining frames of loud proof-tone generated inside the AU callback
+  /// (does not depend on Flutter pushPcm / ring).
+  private var toneFramesLeft: Int64 = 0
+  private var tonePhase: Double = 0
 
   func register(with controller: FlutterViewController) {
     let messenger = controller.engine.binaryMessenger
@@ -99,7 +103,7 @@ final class MacMicBridge: NSObject {
     case "selfTestLoopback":
       result(
         [
-          "message": injectBeep(durationMs: 800),
+          "message": injectBeep(durationMs: 1200),
           "running": running,
           "debug": debugLine(),
         ] as [String: Any]
@@ -126,10 +130,18 @@ final class MacMicBridge: NSObject {
   }
 
   private func debugLine() -> String {
-    let filledMs = deviceRate > 0 ? Int(Double(ringFilled / max(deviceChannels, 1)) / deviceRate * 1000) : 0
+    ringLock.lock()
+    let filled = ringFilled
+    let rf = renderFrames
+    let ur = underruns
+    let tone = toneFramesLeft
+    ringLock.unlock()
+    let filledMs =
+      deviceRate > 0 ? Int(Double(filled / max(Int(deviceChannels), 1)) / deviceRate * 1000) : 0
     return
-      "device=\(outputDeviceName.isEmpty ? "-" : outputDeviceName) bytes=\(bytesForwarded) "
-      + "render=\(renderFrames) underrun=\(underruns) buf=\(filledMs)ms running=\(running)"
+      "hal=\(outputDeviceName.isEmpty ? "-" : outputDeviceName) id=\(outputDeviceID) "
+      + "bytes=\(bytesForwarded) render=\(rf) underrun=\(ur) buf=\(filledMs)ms "
+      + "tone=\(tone) auErr=\(lastAUError) rate=\(Int(deviceRate)) running=\(running)"
   }
 
   private func start() throws {
@@ -140,115 +152,171 @@ final class MacMicBridge: NSObject {
       throw NSError(domain: "DouMic", code: 1, userInfo: [NSLocalizedDescriptionKey: statusMessage])
     }
 
-    maxVolume(deviceID: device.id)
+    // Prefer 48 kHz — matches BlackHole default and System Settings meters.
+    setNominalSampleRate(deviceID: device.id, rate: 48_000)
+    unmuteAndMaxVolume(deviceID: device.id)
 
-    let engine = AVAudioEngine()
-    // Set output device BEFORE reading hardware format / connecting graph.
-    try engine.outputNode.auAudioUnit.setDeviceID(device.id)
-
-    let hw = engine.outputNode.outputFormat(forBus: 0)
-    let rate = hw.sampleRate > 0 ? hw.sampleRate : 48_000
-    let ch = Int(max(hw.channelCount, 1))
+    let rate = nominalSampleRate(deviceID: device.id) ?? 48_000
+    let chCount = max(1, min(2, channelCount(device: device.id, scope: kAudioDevicePropertyScopeOutput)))
     deviceRate = rate
-    deviceChannels = min(ch, 2)
+    deviceChannels = UInt32(chCount)
 
-    guard
-      let outFmt = AVAudioFormat(
-        commonFormat: .pcmFormatFloat32,
-        sampleRate: rate,
-        channels: AVAudioChannelCount(deviceChannels),
-        interleaved: false
-      )
-    else {
-      throw NSError(domain: "DouMic", code: 2, userInfo: [NSLocalizedDescriptionKey: "无法创建输出格式"])
-    }
-
-    // Resize ring for ~2s at device rate.
-    let ringSamples = Int(rate) * deviceChannels * 2
+    let ringSamples = Int(rate) * Int(deviceChannels) * 2
     ringLock.lock()
     ring = [Float](repeating: 0, count: max(ringSamples, 8192))
     ringRead = 0
     ringWrite = 0
     ringFilled = 0
+    toneFramesLeft = 0
+    tonePhase = 0
     ringLock.unlock()
 
-    let source = AVAudioSourceNode {
-      [weak self] _, _, frameCount, audioBufferList -> OSStatus in
-      guard let self else { return noErr }
-      let abl = UnsafeMutableAudioBufferListPointer(audioBufferList)
-      let frames = Int(frameCount)
-      self.ringLock.lock()
-      let availableFrames = self.ringFilled / self.deviceChannels
-      let take = min(frames, availableFrames)
-      for f in 0..<take {
-        for c in 0..<self.deviceChannels {
-          let idx = (self.ringRead + f * self.deviceChannels + c) % self.ring.count
-          let sample = self.ring[idx]
-          if c < abl.count, let data = abl[c].mData?.assumingMemoryBound(to: Float.self) {
-            data[f] = sample
-          }
-        }
-      }
-      // Silence for the rest (underrun).
-      for f in take..<frames {
-        for c in 0..<abl.count {
-          if let data = abl[c].mData?.assumingMemoryBound(to: Float.self) {
-            data[f] = 0
-          }
-        }
-      }
-      let consumed = take * self.deviceChannels
-      self.ringRead = (self.ringRead + consumed) % self.ring.count
-      self.ringFilled -= consumed
-      if take < frames { self.underruns += 1 }
-      self.renderFrames += Int64(frames)
-      self.ringLock.unlock()
-      return noErr
+    var desc = AudioComponentDescription(
+      componentType: kAudioUnitType_Output,
+      componentSubType: kAudioUnitSubType_HALOutput,
+      componentManufacturer: kAudioUnitManufacturer_Apple,
+      componentFlags: 0,
+      componentFlagsMask: 0
+    )
+    guard let comp = AudioComponentFindNext(nil, &desc) else {
+      throw NSError(domain: "DouMic", code: 2, userInfo: [NSLocalizedDescriptionKey: "找不到 HAL 音频单元"])
+    }
+    var au: AudioUnit?
+    var err = AudioComponentInstanceNew(comp, &au)
+    guard err == noErr, let audioUnit = au else {
+      throw NSError(
+        domain: "DouMic", code: 3,
+        userInfo: [NSLocalizedDescriptionKey: "创建 HAL 失败 (\(err))"])
     }
 
-    engine.attach(source)
-    engine.connect(source, to: engine.mainMixerNode, format: outFmt)
-    engine.connect(engine.mainMixerNode, to: engine.outputNode, format: nil)
-    engine.mainMixerNode.outputVolume = 1.0
+    // Output only (element 0). Disable input side (element 1).
+    var enableOut: UInt32 = 1
+    var enableIn: UInt32 = 0
+    err = AudioUnitSetProperty(
+      audioUnit, kAudioOutputUnitProperty_EnableIO, kAudioUnitScope_Output, 0, &enableOut,
+      UInt32(MemoryLayout<UInt32>.size))
+    check(err, "EnableIO out")
+    err = AudioUnitSetProperty(
+      audioUnit, kAudioOutputUnitProperty_EnableIO, kAudioUnitScope_Input, 1, &enableIn,
+      UInt32(MemoryLayout<UInt32>.size))
+    check(err, "EnableIO in")
 
-    try engine.start()
+    var deviceID = device.id
+    err = AudioUnitSetProperty(
+      audioUnit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, &deviceID,
+      UInt32(MemoryLayout<AudioDeviceID>.size))
+    if err != noErr {
+      AudioComponentInstanceDispose(audioUnit)
+      throw NSError(
+        domain: "DouMic", code: 4,
+        userInfo: [
+          NSLocalizedDescriptionKey: "无法把输出设为 \(device.name)（错误 \(err)）。请确认已关闭沙盒/重装 BlackHole"
+        ])
+    }
 
-    // Confirm device stuck.
-    let actualID = engine.outputNode.auAudioUnit.deviceID
+    // Client format: non-interleaved float32 @ device rate — what AUHAL expects on
+    // input scope of output element 0.
+    var asbd = AudioStreamBasicDescription(
+      mSampleRate: rate,
+      mFormatID: kAudioFormatLinearPCM,
+      mFormatFlags: kAudioFormatFlagIsFloat | kAudioFormatFlagIsNonInterleaved
+        | kAudioFormatFlagsNativeEndian,
+      mBytesPerPacket: 4,
+      mFramesPerPacket: 1,
+      mBytesPerFrame: 4,
+      mChannelsPerFrame: deviceChannels,
+      mBitsPerChannel: 32,
+      mReserved: 0
+    )
+    err = AudioUnitSetProperty(
+      audioUnit, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input, 0, &asbd,
+      UInt32(MemoryLayout<AudioStreamBasicDescription>.size))
+    check(err, "StreamFormat")
+
+    var callback = AURenderCallbackStruct(
+      inputProc: MacMicBridgeRenderCallback,
+      inputProcRefCon: Unmanaged.passUnretained(self).toOpaque()
+    )
+    err = AudioUnitSetProperty(
+      audioUnit, kAudioUnitProperty_SetRenderCallback, kAudioUnitScope_Input, 0, &callback,
+      UInt32(MemoryLayout<AURenderCallbackStruct>.size))
+    check(err, "SetRenderCallback")
+
+    err = AudioUnitInitialize(audioUnit)
+    if err != noErr {
+      AudioComponentInstanceDispose(audioUnit)
+      throw NSError(
+        domain: "DouMic", code: 5,
+        userInfo: [NSLocalizedDescriptionKey: "AudioUnitInitialize 失败 (\(err))"])
+    }
+
+    err = AudioOutputUnitStart(audioUnit)
+    if err != noErr {
+      AudioUnitUninitialize(audioUnit)
+      AudioComponentInstanceDispose(audioUnit)
+      throw NSError(
+        domain: "DouMic", code: 6,
+        userInfo: [NSLocalizedDescriptionKey: "AudioOutputUnitStart 失败 (\(err))"])
+    }
+
+    // Verify device stuck on BlackHole.
+    var actualID: AudioDeviceID = 0
+    var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+    AudioUnitGetProperty(
+      audioUnit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, &actualID, &size)
     let actualName = deviceName(id: actualID) ?? device.name
+    if actualID != device.id {
+      AudioOutputUnitStop(audioUnit)
+      AudioUnitUninitialize(audioUnit)
+      AudioComponentInstanceDispose(audioUnit)
+      throw NSError(
+        domain: "DouMic", code: 7,
+        userInfo: [
+          NSLocalizedDescriptionKey:
+            "输出设备被改回 \(actualName)，未能锁定 BlackHole。请重启 Mac 或重装 BlackHole"
+        ])
+    }
 
-    self.engine = engine
-    self.sourceNode = source
+    self.audioUnit = audioUnit
     self.outputDeviceID = actualID
     self.outputDeviceName = actualName
     self.running = true
     self.bytesForwarded = 0
     self.renderFrames = 0
     self.underruns = 0
+    self.lastAUError = noErr
 
-    // Immediate proof tone so System Settings → BlackHole input meter should jump.
-    _ = injectBeep(durationMs: 500)
+    // ~1.2s loud tone generated inside the AU callback itself.
+    _ = injectBeep(durationMs: 1200)
 
     statusMessage =
-      "虚拟麦已开启 → \(actualName)。请看系统设置里 BlackHole 输入电平是否跳动"
+      "HAL 已锁定 \(actualName) @ \(Int(rate))Hz。点「注入测试音」后看系统设置 BlackHole 输入电平"
     emitStatus()
   }
 
   private func stop() {
-    engine?.stop()
-    if let source = sourceNode {
-      engine?.detach(source)
+    if let au = audioUnit {
+      AudioOutputUnitStop(au)
+      AudioUnitUninitialize(au)
+      AudioComponentInstanceDispose(au)
     }
-    sourceNode = nil
-    engine = nil
+    audioUnit = nil
     running = false
     ringLock.lock()
     ringFilled = 0
     ringRead = 0
     ringWrite = 0
+    toneFramesLeft = 0
     ringLock.unlock()
     statusMessage = "虚拟麦克风已关闭"
     emitStatus()
+  }
+
+  private func check(_ err: OSStatus, _ label: String) {
+    if err != noErr {
+      lastAUError = err
+      NSLog("[DouMic] AudioUnit \(label) error: \(err)")
+    }
   }
 
   private func pushPcm(_ data: Data) {
@@ -265,8 +333,7 @@ final class MacMicBridge: NSObject {
     var offset = 0
     while offset < samples.count {
       if ringFilled >= ring.count {
-        // Drop oldest ~20ms to keep latency bounded.
-        let drop = min(deviceChannels * Int(deviceRate * 0.02), ringFilled)
+        let drop = min(Int(deviceChannels) * Int(deviceRate * 0.02), ringFilled)
         ringRead = (ringRead + drop) % ring.count
         ringFilled -= drop
       }
@@ -282,15 +349,16 @@ final class MacMicBridge: NSObject {
     }
   }
 
-  /// 16 kHz mono PCM16 → interleaved float stereo (or mono) @ deviceRate.
+  /// 16 kHz mono PCM16 → interleaved float @ deviceRate / deviceChannels.
   private func resampleToDevice(pcm16leMono16k data: Data) -> [Float] {
     let inSamples = data.count / 2
     guard inSamples > 0 else { return [] }
     let ratio = deviceRate / 16_000.0
     let outFrames = Int((Double(inSamples) * ratio).rounded(.down))
     guard outFrames > 0 else { return [] }
+    let ch = Int(deviceChannels)
 
-    var out = [Float](repeating: 0, count: outFrames * deviceChannels)
+    var out = [Float](repeating: 0, count: outFrames * ch)
     data.withUnsafeBytes { raw in
       let src = raw.bindMemory(to: Int16.self)
       for i in 0..<outFrames {
@@ -300,10 +368,13 @@ final class MacMicBridge: NSObject {
         let frac = Float(srcPos - Double(i0))
         let s0 = Float(src[i0]) / 32768.0
         let s1 = Float(src[i1]) / 32768.0
-        let s = s0 + (s1 - s0) * frac
-        let base = i * deviceChannels
+        // Soft speech boost for Typeless gate (~+12 dB, soft clip).
+        var s = (s0 + (s1 - s0) * frac) * 4.0
+        if s > 1 { s = 1 }
+        if s < -1 { s = -1 }
+        let base = i * ch
         out[base] = s
-        if deviceChannels > 1 { out[base + 1] = s }
+        if ch > 1 { out[base + 1] = s }
       }
     }
     return out
@@ -312,22 +383,61 @@ final class MacMicBridge: NSObject {
   @discardableResult
   private func injectBeep(durationMs: Int) -> String {
     guard running else { return "请先开启虚拟麦克风" }
-    let rate = 16_000
-    let n = rate * durationMs / 1000
-    var data = Data(count: n * 2)
-    data.withUnsafeMutableBytes { raw in
-      let ptr = raw.bindMemory(to: Int16.self)
-      for i in 0..<n {
-        // Louder beep so System Settings meter is obvious.
-        let s = sin(2.0 * Double.pi * 880.0 * Double(i) / Double(rate)) * 30000.0
-        ptr[i] = Int16(clamping: Int(s))
-      }
-    }
-    pushPcm(data)
+    let frames = Int64(deviceRate * Double(durationMs) / 1000.0)
+    ringLock.lock()
+    toneFramesLeft = max(frames, 1)
+    tonePhase = 0
+    ringLock.unlock()
     statusMessage =
-      "已注入测试音到 \(outputDeviceName)。请立刻看「系统设置→声音→输入→BlackHole」电平是否跳动"
+      "HAL 测试音 → \(outputDeviceName)（\(durationMs)ms）。请看「系统设置→声音→输入→BlackHole」电平是否跳动"
     emitStatus()
     return statusMessage
+  }
+
+  /// Called from real-time audio thread — keep it lock-short and allocation-free.
+  fileprivate func render(
+    frameCount: UInt32, audioBufferList: UnsafeMutablePointer<AudioBufferList>
+  ) -> OSStatus {
+    let abl = UnsafeMutableAudioBufferListPointer(audioBufferList)
+    let frames = Int(frameCount)
+    let ch = Int(deviceChannels)
+
+    ringLock.lock()
+    let availableFrames = ringFilled / max(ch, 1)
+    let take = min(frames, availableFrames)
+    var toneLeft = toneFramesLeft
+    var phase = tonePhase
+
+    for f in 0..<frames {
+      var sample: Float = 0
+      if f < take {
+        let idx = (ringRead + f * ch) % ring.count
+        sample = ring[idx]
+      }
+      if toneLeft > 0 {
+        // ~0.7 peak 880 Hz — loud enough for System Settings meter.
+        let t = Float(sin(phase) * 0.7)
+        sample = max(-1, min(1, sample + t))
+        phase += 2.0 * Double.pi * 880.0 / deviceRate
+        if phase > 2.0 * Double.pi { phase -= 2.0 * Double.pi }
+        toneLeft -= 1
+      }
+      for c in 0..<abl.count {
+        if let data = abl[c].mData?.assumingMemoryBound(to: Float.self) {
+          data[f] = sample
+        }
+      }
+    }
+
+    let consumed = take * ch
+    ringRead = (ringRead + consumed) % ring.count
+    ringFilled -= consumed
+    if take < frames && toneFramesLeft <= 0 { underruns += 1 }
+    toneFramesLeft = max(toneLeft, 0)
+    tonePhase = phase
+    renderFrames += Int64(frames)
+    ringLock.unlock()
+    return noErr
   }
 
   private struct AudioDev {
@@ -415,34 +525,67 @@ final class MacMicBridge: NSObject {
     return name as String?
   }
 
-  /// Pull BlackHole I/O volumes to max — otherwise System Settings meter stays flat.
-  private func maxVolume(deviceID: AudioDeviceID) {
+  private func nominalSampleRate(deviceID: AudioDeviceID) -> Double? {
+    var addr = AudioObjectPropertyAddress(
+      mSelector: kAudioDevicePropertyNominalSampleRate,
+      mScope: kAudioObjectPropertyScopeGlobal,
+      mElement: kAudioObjectPropertyElementMain
+    )
+    var rate: Float64 = 0
+    var size = UInt32(MemoryLayout<Float64>.size)
+    guard AudioObjectGetPropertyData(deviceID, &addr, 0, nil, &size, &rate) == noErr else {
+      return nil
+    }
+    return rate
+  }
+
+  private func setNominalSampleRate(deviceID: AudioDeviceID, rate: Float64) {
+    var addr = AudioObjectPropertyAddress(
+      mSelector: kAudioDevicePropertyNominalSampleRate,
+      mScope: kAudioObjectPropertyScopeGlobal,
+      mElement: kAudioObjectPropertyElementMain
+    )
+    var r = rate
+    let size = UInt32(MemoryLayout<Float64>.size)
+    AudioObjectSetPropertyData(deviceID, &addr, 0, nil, size, &r)
+  }
+
+  private func unmuteAndMaxVolume(deviceID: AudioDeviceID) {
     let scopes: [AudioObjectPropertyScope] = [
       kAudioDevicePropertyScopeOutput,
       kAudioDevicePropertyScopeInput,
     ]
     for scope in scopes {
-      var addr = AudioObjectPropertyAddress(
-        mSelector: kAudioDevicePropertyVolumeScalar,
+      var muteAddr = AudioObjectPropertyAddress(
+        mSelector: kAudioDevicePropertyMute,
         mScope: scope,
         mElement: kAudioObjectPropertyElementMain
       )
-      if AudioObjectHasProperty(deviceID, &addr) {
-        var vol: Float32 = 1.0
-        var size = UInt32(MemoryLayout<Float32>.size)
-        AudioObjectSetPropertyData(deviceID, &addr, 0, nil, size, &vol)
+      if AudioObjectHasProperty(deviceID, &muteAddr) {
+        var mute: UInt32 = 0
+        let size = UInt32(MemoryLayout<UInt32>.size)
+        AudioObjectSetPropertyData(deviceID, &muteAddr, 0, nil, size, &mute)
       }
-      // Per-channel volumes (BlackHole often exposes channels 1..N).
-      for element: UInt32 in 1...8 {
-        var chAddr = AudioObjectPropertyAddress(
+      for element: UInt32 in 0...8 {
+        var volAddr = AudioObjectPropertyAddress(
           mSelector: kAudioDevicePropertyVolumeScalar,
           mScope: scope,
           mElement: element
         )
-        if AudioObjectHasProperty(deviceID, &chAddr) {
+        if AudioObjectHasProperty(deviceID, &volAddr) {
           var vol: Float32 = 1.0
-          var size = UInt32(MemoryLayout<Float32>.size)
-          AudioObjectSetPropertyData(deviceID, &chAddr, 0, nil, size, &vol)
+          let size = UInt32(MemoryLayout<Float32>.size)
+          AudioObjectSetPropertyData(deviceID, &volAddr, 0, nil, size, &vol)
+        }
+        var chMute = AudioObjectPropertyAddress(
+          mSelector: kAudioDevicePropertyMute,
+          mScope: scope,
+          mElement: element
+        )
+        if AudioObjectHasProperty(deviceID, &chMute) {
+          var mute: UInt32 = 0
+          let size = UInt32(MemoryLayout<UInt32>.size)
+          AudioObjectSetPropertyData(deviceID, &chMute, 0, nil, size, &mute)
         }
       }
     }
@@ -471,6 +614,20 @@ final class MacMicBridge: NSObject {
       ] as [String: Any]
     )
   }
+}
+
+/// Real-time AUHAL render callback (C convention).
+private func MacMicBridgeRenderCallback(
+  inRefCon: UnsafeMutableRawPointer,
+  ioActionFlags: UnsafeMutablePointer<AudioUnitRenderActionFlags>,
+  inTimeStamp: UnsafePointer<AudioTimeStamp>,
+  inBusNumber: UInt32,
+  inNumberFrames: UInt32,
+  ioData: UnsafeMutablePointer<AudioBufferList>?
+) -> OSStatus {
+  guard let ioData else { return noErr }
+  let bridge = Unmanaged<MacMicBridge>.fromOpaque(inRefCon).takeUnretainedValue()
+  return bridge.render(frameCount: inNumberFrames, audioBufferList: ioData)
 }
 
 extension MacMicBridge: FlutterStreamHandler {

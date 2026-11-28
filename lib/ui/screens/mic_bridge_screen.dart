@@ -462,7 +462,7 @@ class _MicBridgeScreenState extends State<MicBridgeScreen> {
                     Text(
                       _isMac
                           ? (bridge.virtualMicRunning
-                              ? '✓ 正在向 BlackHole 灌音。请看「系统设置→声音→输入→BlackHole」电平是否跳动；Typeless 选「自动检测/系统默认」（系统输入须为 BlackHole）'
+                              ? '✓ HAL 正在向 BlackHole 输出。系统设置 BlackHole 输入电平必须跳动；若不跳请看下方 debug（render 应增长）。Typeless：系统输入选 BlackHole +「自动检测」并重启'
                               : '⚠ 虚拟麦未在运行')
                           : (bridge.appsCapturingVirtualMic
                               ? '✓ 系统报告：已有 App 正在从「虚拟麦注入通路」采麦'

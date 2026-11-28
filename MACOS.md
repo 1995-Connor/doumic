@@ -39,7 +39,7 @@ CI：`.github/workflows/macos-dmg.yml`（push / 手动触发）。
 | 现象 | 处理 |
 |---|---|
 | 一键安装要密码 | 正常，装系统音频驱动必须管理员权限 |
-| 系统 BlackHole 输入电平不动 | 换 v1.4.3+；开虚拟麦后点「注入测试音」；调试行应有 `render` 增长、`underrun` 不暴涨 |
+| 系统 BlackHole 输入电平不动 | 换 **v1.4.4+**（AUHAL 直出）；开虚拟麦后点「注入测试音」；debug 须含 `hal=BlackHole` 且 `render` 持续增长；`auErr` 应为 0 |
 | Typeless 列表无 BlackHole | 常见：Typeless 不列虚拟设备 → 系统输入默认选 BlackHole + Typeless「自动检测」+ 重启 Typeless |
 | Typeless 无波形 | 先确认系统 BlackHole 电平会动，再查 Typeless 输入 |
 | 电脑没声音 | 系统输出改回扬声器/耳机 |
