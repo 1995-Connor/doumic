@@ -1,60 +1,48 @@
-# 豆麦 · macOS 演示（系统级虚拟麦克风）
+# 豆麦 · macOS（系统级虚拟麦克风）
 
-在 Mac 上可以真正演示「录音豆 → 任意 App 麦克风」：通过 **BlackHole** 虚拟声卡。  
-Typeless / Zoom / 系统听写把输入选成 BlackHole 后，就会听到录音豆。
+把安克 AI 录音豆（D3200）的声音送到 **BlackHole**，Typeless / Zoom 等把麦克风选成 BlackHole 即可。
 
 ```text
-录音豆 (BLE Opus) → 豆麦 App → BlackHole 2ch → Typeless / Zoom / …
+录音豆 (BLE Opus) → 豆麦.app → BlackHole 2ch → Typeless / Zoom
 ```
 
-## 1. 安装 BlackHole
+## 推荐：安装 DMG
 
-```bash
-brew install blackhole-2ch
-```
+1. 下载 [`releases/doumai-macos.dmg`](releases/doumai-macos.dmg)  
+   （若仓库里还没有该文件：等 GitHub Actions「macOS DMG」跑完，或在自己 Mac 上按下方「本地打包」生成）
+2. 打开 DMG：
+   - 先看「使用说明.txt」
+   - 双击「安装 BlackHole.command」或按说明安装 **BlackHole 2ch**（只需一次）
+   - 把 **豆麦.app** 拖到 **Applications**
+3. 首次打开：右键 → 打开（未签名会提示一次）→ 允许蓝牙
+4. 豆麦连上录音豆 → 打开「系统虚拟麦克风」
+5. Typeless 麦克风选 **BlackHole 2ch**，对着豆说话
 
-或官网：https://existential.audio/blackhole/
+**系统「声音 → 输出」不要选 BlackHole**，否则喇叭没声；只在 Typeless 的输入里选。
 
-装完后打开 **音频 MIDI 设置**，应能看到 **BlackHole 2ch**。
+## 本地运行 / 打包
 
-> 不要把系统「输出」设成 BlackHole，否则电脑喇叭会没声。  
-> 只在 **Typeless / 会议 App 的麦克风输入** 里选 BlackHole。
-
-## 2. 编译运行豆麦（Mac）
-
-在本仓库根目录（需要本机 Xcode）：
+需要本机 Xcode + Flutter。
 
 ```bash
 flutter pub get
 flutter run -d macos
-# 或打包：
+
+# 打 DMG：
 flutter build macos --release
-# App 位于 build/macos/Build/Products/Release/豆麦.app
+chmod +x macos/packaging/create_dmg.sh
+macos/packaging/create_dmg.sh
+# → releases/doumai-macos.dmg
 ```
 
-首次运行允许 **蓝牙** 权限。
-
-## 3. 演示步骤
-
-1. 豆麦：扫描并连接录音豆（退出飞书等占用设备的 App）
-2. 确认界面显示「已检测到虚拟声卡（BlackHole）」
-3. 打开「系统虚拟麦克风」开关
-4. Typeless：麦克风选 **BlackHole 2ch**，开始语音输入
-5. 对着录音豆说话 → Typeless 波形应跳动
-
-可选：豆麦里点「注入测试音」——不用说话，Typeless（已选 BlackHole）波形应跳一下。
-
-## 4. 和 Android 的区别
-
-| | macOS | Android |
-|---|---|---|
-| 虚拟麦 | BlackHole 等 HAL 驱动，系统官方支持选输入 | 无普通权限虚拟声卡；只能特权 AudioPolicy 注入 |
-| Typeless | 可选 BlackHole，**可以演示通** | 多数国产 ROM 仍读手机麦 |
-| 蓝牙列表 | 同样不会出现录音豆（BLE ≠ HFP） | 同左 |
+GitHub Actions（`.github/workflows/macos-dmg.yml`）在 push 到 `main` 且改到 macOS 相关文件时会自动构建，也可在 Actions 页手动 **Run workflow**，产物名 `doumai-macos-dmg`。
 
 ## 故障排除
 
-- **开虚拟麦提示未找到 BlackHole**：确认已安装并重启「音频 MIDI 设置」/注销一次
-- **Typeless 无波形**：确认 Typeless 输入是 BlackHole，且豆麦开关已开、电平在跳
-- **电脑没声音了**：系统输出被改成了 BlackHole，改回扬声器/耳机
-- **连不上豆**：退出飞书 / Soundcore Manager，再在豆麦里扫描
+| 现象 | 处理 |
+|---|---|
+| 提示未找到 BlackHole | 安装 2ch，打开「音频 MIDI 设置」确认 |
+| Typeless 无波形 | 确认输入是 BlackHole，且豆麦虚拟麦已开、电平在跳 |
+| 电脑没声音 | 系统输出被改成了 BlackHole，改回扬声器 |
+| 打不开 App | 右键 → 打开；系统设置 → 隐私与安全性 → 仍要打开 |
+| 连不上豆 | 退出飞书 / Soundcore Manager 后再扫描 |

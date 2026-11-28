@@ -26,8 +26,9 @@
 
 **演示系统级虚拟麦（推荐）→ macOS**
 
-- Mac + [BlackHole 2ch](https://existential.audio/blackhole/)
-- 见 [`MACOS.md`](MACOS.md)：`flutter run -d macos`，Typeless 麦克风选 BlackHole
+- 安装包：[`releases/doumai-macos.dmg`](releases/doumai-macos.dmg)（由 GitHub Actions 构建）
+- 需另装一次 [BlackHole 2ch](https://existential.audio/blackhole/)；Typeless 麦克风选 BlackHole
+- 详见 [`MACOS.md`](MACOS.md)
 
 **Android（受限）**
 
